@@ -1,0 +1,1655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Library Services Activity Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'DM Sans', 'Segoe UI', sans-serif; background: #F5F3EF; }
+    #root { min-height: 100vh; }
+    #loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; color: #888; font-size: 16px; flex-direction: column; gap: 12px; }
+    #loading .spinner { width: 32px; height: 32px; border: 3px solid #ddd; border-top-color: #2D5A7B; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="loading">
+      <div class="spinner"></div>
+      <div>Loading dashboard...</div>
+    </div>
+  </div>
+
+  <script>var _loadErrors = [];</script>
+  <script src="https://unpkg.com/react/umd/react.production.min.js" onerror="_loadErrors.push('React')"></script>
+  <script src="https://unpkg.com/react-dom/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
+  <script src="https://unpkg.com/react-is/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
+  <script src="https://unpkg.com/recharts/umd/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
+
+  <script>
+    function showError(msg) {
+      document.getElementById('root').innerHTML =
+        '<div style="padding:40px;text-align:center;color:#c55;font-family:sans-serif;max-width:600px;margin:0 auto">' +
+        '<h2 style="margin-bottom:12px">Dashboard failed to load</h2>' +
+        '<p>' + msg + '</p>' +
+        '<p style="margin-top:16px;color:#888;font-size:13px">This dashboard needs an internet connection to load its charting libraries.</p>' +
+        '<p style="margin-top:8px;color:#888;font-size:13px">If you are connected and still seeing this error, try a different browser (Chrome or Edge recommended).</p></div>';
+    }
+
+    function bootDashboard() {
+      if (_loadErrors.length > 0) {
+        showError('Failed to load scripts: ' + _loadErrors.join(', '));
+        return;
+      }
+
+      if (!window.React || !window.ReactDOM || !window.Recharts || !window.Babel) {
+        var missing = [];
+        if (!window.React) missing.push('React');
+        if (!window.ReactDOM) missing.push('ReactDOM');
+        if (!window.Recharts) missing.push('Recharts');
+        if (!window.Babel) missing.push('Babel');
+        showError('Scripts loaded but libraries not found: ' + missing.join(', '));
+        return;
+      }
+
+      var jsxCode = `
+const { useState, useCallback, useMemo, useRef, useEffect } = React;
+const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell, LineChart, Line } = Recharts;
+
+
+// Team structure
+const TEAMS = {
+  "STEM&E": [
+    "jodi bolognese", "melissa gough", "rachel landis", "khyle hannan",
+    "lily reilly", "kathy herrlich", "katherine herrlich",
+    "alyn gamble", "philip espinola coombs", "lauri fennell", "alissa link cilfone"
+  ],
+  "Online Learning": [
+    "lindley homol", "dina meky", "anaya jones", "annette parde-maass", "annette parde-maas"
+  ],
+  "ASSH": [
+    "karen merguerian", "roxanne palmatier", "christine oka",
+    "regina pagani", "brooke williams", "tamara uhaze"
+  ],
+};
+
+// All R&I members (union of all teams)
+const ALL_RI_NAMES = Object.values(TEAMS).flat();
+
+// Check if a name string matches any name in a given list
+function nameMatchesList(nameStr, nameList) {
+  if (!nameStr) return false;
+  const lower = nameStr.toLowerCase().trim();
+  return nameList.some(tm => {
+    if (lower === tm) return true;
+    const parts = tm.split(" ");
+    if (parts.length >= 2) {
+      const first = parts[0];
+      const last = parts.slice(1).join(" ");
+      if (lower.includes(last + ", " + first)) return true;
+      if (lower.includes(tm)) return true;
+    }
+    return false;
+  });
+}
+
+// Legacy wrapper used throughout — checks against the currently active filter list
+function isTeamMember(nameStr, activeNames) {
+  return nameMatchesList(nameStr, activeNames || ALL_RI_NAMES);
+}
+
+// CSV parser (row-per-record format)
+function parseCSV(text) {
+  const lines = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if ((ch === "," || ch === "\\n" || ch === "\\r") && !inQuotes) {
+      if (ch === ",") { lines.length ? lines[lines.length - 1].push(current) : lines.push([current]); current = ""; }
+      else if (ch === "\\n") {
+        if (current || (lines.length && lines[lines.length - 1])) {
+          lines.length ? lines[lines.length - 1].push(current) : lines.push([current]);
+          current = "";
+          lines.push([]);
+        }
+      }
+    } else { current += ch; }
+  }
+  if (current) lines.length ? lines[lines.length - 1].push(current) : lines.push([current]);
+  const filtered = lines.filter(r => r.some(c => c.trim()));
+  if (!filtered.length) return [];
+  const headers = filtered[0].map(h => h.trim().replace(/^\\uFEFF/, ""));
+  return filtered.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (row[i] || "").trim(); });
+    return obj;
+  });
+}
+
+// Parse "Apr-26" style month headers to "2026-04" format
+function parseMonthHeader(header) {
+  if (!header) return null;
+  const h = header.trim();
+  // Match "Mon-YY" format like "Apr-26"
+  const match = h.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\\d{2})$/i);
+  if (match) {
+    const monIdx = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(match[1].toLowerCase());
+    if (monIdx >= 0) {
+      const year = parseInt(match[2], 10) + 2000;
+      return \`\${year}-\${String(monIdx + 1).padStart(2, "0")}\`;
+    }
+  }
+  // Also try "Mon YYYY" like "Apr 2026"
+  const match2 = h.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+(\\d{4})$/i);
+  if (match2) {
+    const monIdx = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(match2[1].toLowerCase());
+    if (monIdx >= 0) return \`\${match2[2]}-\${String(monIdx + 1).padStart(2, "0")}\`;
+  }
+  return null;
+}
+
+// Parser for block-based Springshare LibCal appointments format
+// Structure:
+//   "Jodi Bolognese Monthly Distribution "
+//   "Month/Year","Jul 2025","Aug 2025",...
+//   "Confirmed Appointments","0","0","1",...
+//   ...more metric rows...
+//   (blank line)
+//   "Philip Espinola Coombs Monthly Distribution "
+//   "Month/Year","Jul 2025","Aug 2025",...
+//   ...
+function parseBlockSummary(text) {
+  const rawLines = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if ((ch === "," || ch === "\\n" || ch === "\\r") && !inQuotes) {
+      if (ch === ",") { rawLines.length ? rawLines[rawLines.length - 1].push(current) : rawLines.push([current]); current = ""; }
+      else if (ch === "\\n") {
+        if (current || (rawLines.length && rawLines[rawLines.length - 1])) {
+          rawLines.length ? rawLines[rawLines.length - 1].push(current) : rawLines.push([current]);
+          current = "";
+          rawLines.push([]);
+        }
+      }
+    } else { current += ch; }
+  }
+  if (current) rawLines.length ? rawLines[rawLines.length - 1].push(current) : rawLines.push([current]);
+
+  const rows = rawLines.filter(r => r.some(c => c.trim())).map(r => r.map(c => c.trim()));
+  if (!rows.length) return [];
+
+  const result = [];
+  let currentPerson = null;
+  let currentMonthMap = null; // column index -> "YYYY-MM" for the current person's block
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    const cellA = (row[0] || "").trim();
+    const cellALower = cellA.toLowerCase();
+
+    // Detect person name: ends with "Monthly Distribution" (with possible trailing space)
+    if (cellALower.includes("monthly distribution") && !cellALower.startsWith("month")) {
+      // Extract name: everything before " Monthly Distribution"
+      const distIdx = cellA.toLowerCase().indexOf(" monthly distribution");
+      if (distIdx > 0) {
+        const candidateName = cellA.substring(0, distIdx).trim();
+        // Skip non-person blocks (categories, locations, section headers)
+        const skipPatterns = ["no category", "online", "in-person", "in person", "virtual",
+          "research data", "snell library", "category", "total", "summary", "all users",
+          "per user", "location", "appointment type"];
+        const isNonPerson = skipPatterns.some(sp => candidateName.toLowerCase().includes(sp));
+        if (!isNonPerson && candidateName.length > 2) {
+          currentPerson = candidateName;
+        } else {
+          currentPerson = null;
+        }
+        currentMonthMap = null;
+      }
+      continue;
+    }
+
+    // Detect Month/Year header row for the current person block
+    if (cellALower === "month/year" && row.length > 2) {
+      const map = {};
+      for (let ci = 1; ci < row.length; ci++) {
+        const mk = parseMonthHeader(row[ci]);
+        if (mk) map[ci] = mk;
+      }
+      if (Object.keys(map).length >= 2) {
+        currentMonthMap = map;
+      }
+      continue;
+    }
+
+    // Detect "Confirmed Appointments" row under a person with a month map
+    if (currentPerson && currentMonthMap && cellALower === "confirmed appointments") {
+      for (const [colIdx, monthKey] of Object.entries(currentMonthMap)) {
+        const val = parseInt(row[parseInt(colIdx, 10)] || "0", 10);
+        if (val > 0) {
+          for (let n = 0; n < val; n++) {
+            result.push({
+              "Entered By": currentPerson,
+              "Date": \`\${monthKey}-15\`,
+              "_name": currentPerson,
+              "_date": \`\${monthKey}-15\`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+
+// Detect if a CSV text is block-based summary format or row-per-record
+function isBlockSummaryFormat(text) {
+  const firstChunk = text.substring(0, 5000);
+  // Check for "Monthly Distribution" per-user blocks
+  if (firstChunk.includes("Monthly Distribution") && firstChunk.includes("Confirmed Appointments")) return true;
+  // Check for "Month/Year" header rows with month names
+  if (firstChunk.includes("Month/Year") && firstChunk.includes("Confirmed Appointments")) return true;
+  // Check for month header patterns: "Apr-26" or "Apr 2026" or "Jul 2025"
+  const monthPattern = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[\\s-]\\d{2,4}/gi;
+  const matches = firstChunk.match(monthPattern);
+  if (matches && matches.length >= 6 && firstChunk.includes("Confirmed Appointments")) return true;
+  return false;
+}
+
+const PALETTE = ["#2D5A7B", "#D4853F", "#5B8C5A", "#C45B5B", "#7B68AE", "#D4A03F", "#5BA0B4", "#A05B7B", "#6B8F4E", "#B07040"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function getMonthKey(dateStr) {
+  if (!dateStr) return null;
+  const d = dateStr.substring(0, 10);
+  const parts = d.split("-");
+  if (parts.length >= 2) return \`\${parts[0]}-\${parts[1]}\`;
+  return null;
+}
+
+function formatMonthKey(key) {
+  if (!key) return "";
+  const [y, m] = key.split("-");
+  return \`\${MONTHS[parseInt(m, 10) - 1]} \${y}\`;
+}
+
+function getAllMonths(data1, data2, data3) {
+  const set = new Set();
+  (data1 || []).forEach(r => { const k = getMonthKey(r["Date"]); if (k) set.add(k); });
+  (data2 || []).forEach(r => { const k = getMonthKey(r["Start Date"]); if (k) set.add(k); });
+  (data3 || []).forEach(r => { const k = getMonthKey(r["Date"] || r["Start Date"] || r["Event Date"]); if (k) set.add(k); });
+  return Array.from(set).sort();
+}
+
+function DropZone({ label, fileKey, onFile, fileName, color }) {
+  const [drag, setDrag] = useState(false);
+  const inputRef = useRef(null);
+  const handleDrop = useCallback((e) => {
+    e.preventDefault(); setDrag(false);
+    const f = e.dataTransfer.files[0];
+    if (f) { const r = new FileReader(); r.onload = (ev) => onFile(fileKey, ev.target.result, f.name); r.readAsText(f); }
+  }, [fileKey, onFile]);
+  const handleClick = () => inputRef.current?.click();
+  const handleChange = (e) => {
+    const f = e.target.files[0];
+    if (f) { const r = new FileReader(); r.onload = (ev) => onFile(fileKey, ev.target.result, f.name); r.readAsText(f); }
+  };
+  return (
+    <div onClick={handleClick} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={handleDrop}
+      style={{ border: \`2px dashed \${drag ? color : "#ccc"}\`, borderRadius: 12, padding: "18px 16px", textAlign: "center", cursor: "pointer",
+        background: fileName ? \`\${color}10\` : drag ? \`\${color}08\` : "transparent", transition: "all 0.2s", minHeight: 70, display: "flex",
+        flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 6 }}>
+      <input ref={inputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleChange} />
+      <div style={{ fontSize: 13, fontWeight: 600, color: color, letterSpacing: "0.02em", textTransform: "uppercase" }}>{label}</div>
+      {fileName ? (
+        <div style={{ fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "#2a7", fontSize: 15 }}>✓</span> {fileName}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: "#999" }}>Drop CSV or click to browse</div>
+      )}
+    </div>
+  );
+}
+
+function KPICard({ title, value, sub, color, icon, onClick }) {
+  return (
+    <div onClick={onClick} style={{ background: "#fff", borderRadius: 14, padding: "22px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: \`4px solid \${color}\`, flex: 1, minWidth: 180,
+      cursor: onClick ? "pointer" : "default", transition: "box-shadow 0.2s, transform 0.15s", ...(onClick ? {} : {}) }}
+      onMouseEnter={e => { if (onClick) { e.currentTarget.style.boxShadow = "0 3px 12px rgba(0,0,0,0.12)"; e.currentTarget.style.transform = "translateY(-1px)"; } }}
+      onMouseLeave={e => { if (onClick) { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.06)"; e.currentTarget.style.transform = "none"; } }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{icon} {title}</div>
+      <div style={{ fontSize: 34, fontWeight: 700, color: color, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{sub}</div>}
+      {onClick && <div style={{ fontSize: 10, color: "#bbb", marginTop: 6 }}>Click to view records</div>}
+    </div>
+  );
+}
+
+function PersonTable({ data, label, color }) {
+  if (!data || !data.length) return null;
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
+      <div style={{ maxHeight: 320, overflowY: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid #eee" }}>
+              <th style={{ textAlign: "left", padding: "8px 6px", color: "#666", fontWeight: 600 }}>Name</th>
+              <th style={{ textAlign: "right", padding: "8px 6px", color: "#666", fontWeight: 600 }}>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                <td style={{ padding: "7px 6px", color: "#333" }}>{row.name}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: color, fontFamily: "'DM Mono', monospace" }}>{row.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TypeBreakdownChart({ data, title, colors }) {
+  if (!data || !data.length) return null;
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>{title}</div>
+      <ResponsiveContainer width="100%" height={240}>
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} innerRadius={45} paddingAngle={2} label={({ name, percent }) => percent > 0.05 ? \`\${name.substring(0, 18)}\${name.length > 18 ? "…" : ""} (\${(percent * 100).toFixed(0)}%)\` : ""} style={{ fontSize: 11 }}>
+            {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+          </Pie>
+          <Tooltip />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function TrendChart({ referenceData, instructionData, eventsData, allMonths }) {
+  const chartData = allMonths.map(mk => {
+    const refCount = (referenceData || []).filter(r => getMonthKey(r["_date"] || r["Date"]) === mk).length;
+    const instrCount = (instructionData || []).filter(r => getMonthKey(r["Start Date"]) === mk).length;
+    let evtCount = 0;
+    if (eventsData && eventsData.length) {
+      evtCount = eventsData.filter(r => getMonthKey(r["Date"] || r["Start Date"] || r["Event Date"]) === mk).length;
+    }
+    return { month: formatMonthKey(mk), Consultations: refCount, Instruction: instrCount, Events: evtCount || undefined };
+  });
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>Monthly Trend</div>
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Legend />
+          <Line type="monotone" dataKey="Consultations" stroke="#2D5A7B" strokeWidth={2.5} dot={{ r: 4 }} />
+          <Line type="monotone" dataKey="Instruction" stroke="#D4853F" strokeWidth={2.5} dot={{ r: 4 }} />
+          {chartData.some(d => d.Events) && <Line type="monotone" dataKey="Events" stroke="#5B8C5A" strokeWidth={2.5} dot={{ r: 4 }} />}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ComparisonBar({ currentData, yearAgoData, currentLabel, yearAgoLabel, label, color }) {
+  const data = [
+    yearAgoLabel ? { month: yearAgoLabel, count: yearAgoData, fill: color + "66" } : null,
+    { month: currentLabel, count: currentData, fill: color },
+  ].filter(Boolean);
+  if (data.length < 2) return null;
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", flex: 1, minWidth: 260 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>{label} — Year over Year</div>
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+            {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function DetailList({ title, color, rows, columns }) {
+  const [expanded, setExpanded] = useState(false);
+  const [sortCol, setSortCol] = useState(null);
+  const [sortAsc, setSortAsc] = useState(true);
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    let result = rows;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(r => columns.some(c => (r[c.key] || "").toLowerCase().includes(q)));
+    }
+    if (sortCol) {
+      result = [...result].sort((a, b) => {
+        const va = (a[sortCol] || "").toLowerCase();
+        const vb = (b[sortCol] || "").toLowerCase();
+        const na = parseFloat(va), nb = parseFloat(vb);
+        if (!isNaN(na) && !isNaN(nb)) return sortAsc ? na - nb : nb - na;
+        return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+    }
+    return result;
+  }, [rows, search, sortCol, sortAsc, columns]);
+
+  const displayed = expanded ? filtered : filtered.slice(0, 15);
+
+  const handleSort = (key) => {
+    if (sortCol === key) setSortAsc(!sortAsc);
+    else { setSortCol(key); setSortAsc(true); }
+  };
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", margin: "16px 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif", borderLeft: \`4px solid \${color}\`, paddingLeft: 10 }}>
+          {title} <span style={{ fontWeight: 400, color: "#999", fontSize: 12 }}>({filtered.length} records)</span>
+        </div>
+        <input type="text" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)}
+          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 12, width: 180, fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: \`2px solid \${color}30\` }}>
+              {columns.map(col => (
+                <th key={col.key} onClick={() => handleSort(col.key)}
+                  style={{ textAlign: "left", padding: "8px 6px", color: "#555", fontWeight: 600, cursor: "pointer",
+                    whiteSpace: "nowrap", width: col.width || "auto", userSelect: "none", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  {col.label} {sortCol === col.key ? (sortAsc ? "↑" : "↓") : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {displayed.map((row, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f3f3f3", background: i % 2 === 0 ? "#fafafa" : "#fff" }}>
+                {columns.map(col => (
+                  <td key={col.key} style={{ padding: "7px 6px", color: "#444", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={row[col.key] || ""}>
+                    {col.render ? col.render(row[col.key]) : (row[col.key] || "—")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {displayed.length === 0 && (
+              <tr><td colSpan={columns.length} style={{ padding: 20, textAlign: "center", color: "#aaa" }}>No matching records</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {filtered.length > 15 && (
+        <div style={{ textAlign: "center", marginTop: 12 }}>
+          <button onClick={() => setExpanded(!expanded)}
+            style={{ padding: "6px 20px", borderRadius: 8, border: \`1px solid \${color}40\`, background: \`\${color}08\`, color: color,
+              fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+            {expanded ? "Show less" : \`Show all \${filtered.length} records\`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ParticipantColumn({ data, label, total, color, dim }) {
+  const maxCount = data.length ? Math.max(...data.map(p => p.count)) : 1;
+  return (
+    <div style={{ flex: 1, minWidth: 0, opacity: dim ? 0.5 : 1 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: color, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+      {data.map(({ name, count }) => (
+        <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #f5f5f5" }}>
+          <span style={{ fontSize: 12, color: "#444", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "55%" }}>{name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: Math.max(3, (count / maxCount) * 50), height: 7, borderRadius: 4, background: color }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: color, fontFamily: "'DM Mono', monospace", minWidth: 30, textAlign: "right" }}>{count}</span>
+          </div>
+        </div>
+      ))}
+      {data.length === 0 && <div style={{ fontSize: 12, color: "#ccc", padding: "8px 0" }}>No data</div>}
+      <div style={{ fontSize: 10, color: "#aaa", marginTop: 6 }}>Total: {total}</div>
+    </div>
+  );
+}
+
+function DrilldownModal({ title, rows, columns, color, onClose }) {
+  if (!rows || !rows.length) return null;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 900, width: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <div style={{ padding: "18px 22px", borderBottom: \`3px solid \${color}\`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif" }}>{title}</div>
+            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{rows.length} records</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#999", padding: "4px 8px", lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ overflow: "auto", padding: "12px 22px 22px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: \`2px solid \${color}30\` }}>
+                {columns.map(col => (
+                  <th key={col.key} style={{ textAlign: "left", padding: "8px 6px", color: "#555", fontWeight: 600, whiteSpace: "nowrap", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #f3f3f3", background: i % 2 === 0 ? "#fafafa" : "#fff" }}>
+                  {columns.map(col => (
+                    <td key={col.key} style={{ padding: "7px 6px", color: "#444", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row[col.key] || ""}>
+                      {col.render ? col.render(row[col.key]) : (row[col.key] || "—")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LibraryDashboard() {
+  const [syncRaw, setSyncRaw] = useState(null);
+  const [asyncRaw, setAsyncRaw] = useState(null);
+  const [instrRaw, setInstrRaw] = useState(null);
+  const [evtRaw, setEvtRaw] = useState(null);
+  const [syncName, setSyncName] = useState("");
+  const [asyncName, setAsyncName] = useState("");
+  const [instrName, setInstrName] = useState("");
+  const [evtName, setEvtName] = useState("");
+  const [viewType, setViewType] = useState("month"); // "month" | "calendar" | "review"
+  const [viewPeriod, setViewPeriod] = useState(null); // e.g. "2026-04" for month, "2026" for year
+  const [selectedTeams, setSelectedTeams] = useState(["STEM&E"]); // default to user's team
+  const [drilldown, setDrilldown] = useState(null); // { title, rows, columns, color }
+
+  // Compute active name filter list based on selected teams
+  const activeFilterNames = useMemo(() => {
+    if (selectedTeams.includes("All Staff")) return null; // null = no filter
+    if (selectedTeams.length === 0) return []; // empty = show nothing
+    const names = [];
+    selectedTeams.forEach(team => {
+      if (TEAMS[team]) names.push(...TEAMS[team]);
+    });
+    return names;
+  }, [selectedTeams]);
+
+  const toggleTeam = (team) => {
+    if (team === "All Staff") {
+      setSelectedTeams(["All Staff"]);
+      return;
+    }
+    setSelectedTeams(prev => {
+      const without = prev.filter(t => t !== "All Staff");
+      if (without.includes(team)) {
+        const result = without.filter(t => t !== team);
+        return result.length === 0 ? ["All Staff"] : result;
+      } else {
+        return [...without, team];
+      }
+    });
+  };
+
+  const syncIsBlock = false; // kept for detail list column switching
+  const syncParsed = useMemo(() => syncRaw ? parseCSV(syncRaw) : null, [syncRaw]);
+
+  // Process sync appointments: filter Active, merge duplicate columns, normalize fields
+  const syncDataAll = useMemo(() => {
+    if (!syncParsed) return null;
+    const firstRow = syncParsed[0] || {};
+    const keys = Object.keys(firstRow);
+    // Detect if this is the new row-level appointment format (has "Status" and "With" columns)
+    const isApptFormat = keys.includes("Status") && keys.includes("With");
+    if (!isApptFormat) return syncParsed; // fallback to raw parse for other formats
+
+    // Filter to Active only
+    const active = syncParsed.filter(r => (r["Status"] || "").trim() === "Active");
+
+    // Merge duplicate college, campus, and student-level columns
+    return active.map(r => {
+      // College: find first non-empty across duplicate columns
+      const collegeCols = keys.filter(k => k.toLowerCase().includes("college") || k.toLowerCase().includes("affiliation"));
+      const college = collegeCols.reduce((found, col) => {
+        if (found) return found;
+        const v = (r[col] || "").trim();
+        return (v && v !== "N/A" && v !== "-") ? v : null;
+      }, null) || "";
+
+      // Campus: merge campus columns
+      const campusCols = keys.filter(k => k.toLowerCase().includes("campus"));
+      const campus = campusCols.reduce((found, col) => {
+        if (found) return found;
+        const v = (r[col] || "").trim();
+        return (v && v !== "N/A" && v !== "-" && !v.toLowerCase().includes("postcode")) ? v : null;
+      }, null) || "";
+
+      // Student level: merge "I am a" columns
+      const levelCols = keys.filter(k => k.toLowerCase().includes("i am a"));
+      const studentLevel = levelCols.reduce((found, col) => {
+        if (found) return found;
+        const v = (r[col] || "").trim();
+        return (v && v !== "N/A" && v !== "-") ? v : null;
+      }, null) || "";
+
+      // Meeting purpose: merge various "hope to accomplish/get out of" columns
+      const purposeCols = keys.filter(k => k.toLowerCase().includes("hope to") || k.toLowerCase().includes("accomplish"));
+      const purpose = purposeCols.reduce((found, col) => {
+        if (found) return found;
+        const v = (r[col] || "").trim();
+        return (v && v !== "N/A" && v !== "-") ? v : null;
+      }, null) || "";
+
+      return {
+        ...r,
+        "Entered By": r["With"] || "",
+        "_college": college,
+        "_campus": campus,
+        "_studentLevel": studentLevel,
+        "_purpose": purpose,
+        "_showedUp": (r["Showed Up"] || "").trim(),
+        "_location": (r["Location"] || "").trim(),
+      };
+    });
+  }, [syncParsed]);
+
+  const asyncDataAll = useMemo(() => asyncRaw ? parseCSV(asyncRaw) : null, [asyncRaw]);
+  const instrDataAll = useMemo(() => instrRaw ? parseCSV(instrRaw) : null, [instrRaw]);
+  const evtDataRaw = useMemo(() => evtRaw ? parseCSV(evtRaw) : null, [evtRaw]);
+
+  // Detect the name/date columns for each consultation file (they may differ)
+  const detectNameCol = (data) => {
+    if (!data || !data.length) return "Entered By";
+    const keys = Object.keys(data[0]);
+    const exact = ["Entered By", "With", "Name", "Staff", "Librarian", "Employee", "Owner", "Assigned To"];
+    for (const e of exact) { if (keys.includes(e)) return e; }
+    return keys.find(k => {
+      const lk = k.toLowerCase();
+      return lk.includes("entered") || lk.includes("staff") || lk.includes("librarian") ||
+        lk.includes("owner") || lk.includes("assigned") || lk.includes("name") || lk.includes("by");
+    }) || keys[0];
+  };
+  const detectDateCol = (data) => {
+    if (!data || !data.length) return "Date";
+    const keys = Object.keys(data[0]);
+    const exact = ["Date", "Start Date", "Event Date", "Created", "Timestamp"];
+    for (const e of exact) { if (keys.includes(e)) return e; }
+    return keys.find(k => k.toLowerCase().includes("date") || k.toLowerCase().includes("created") || k.toLowerCase().includes("time")) || keys[0];
+  };
+
+  const syncNameCol = useMemo(() => "Entered By", []);  // always normalized to "Entered By"
+  const asyncNameCol = useMemo(() => detectNameCol(asyncDataAll), [asyncDataAll]);
+  const syncDateCol = useMemo(() => detectDateCol(syncDataAll), [syncDataAll]);
+  const asyncDateCol = useMemo(() => detectDateCol(asyncDataAll), [asyncDataAll]);
+
+  // Diagnostic: columns detected per file
+  const syncCols = useMemo(() => syncDataAll && syncDataAll.length ? Object.keys(syncDataAll[0]) : [], [syncDataAll]);
+  const asyncCols = useMemo(() => asyncDataAll && asyncDataAll.length ? Object.keys(asyncDataAll[0]) : [], [asyncDataAll]);
+
+  // Tag and apply team filter
+  const syncData = useMemo(() => {
+    if (!syncDataAll) return null;
+    const tagged = syncDataAll.map(r => ({ ...r, _consultType: "Synchronous" }));
+    if (!activeFilterNames) return tagged;
+    return tagged.filter(r => isTeamMember(r[syncNameCol], activeFilterNames));
+  }, [syncDataAll, activeFilterNames, syncNameCol]);
+
+  const asyncData = useMemo(() => {
+    if (!asyncDataAll) return null;
+    const tagged = asyncDataAll.map(r => ({
+      ...r,
+      _consultType: "Asynchronous",
+      _college: r["College or Affiliation"] || "",
+      _studentLevel: r["Type of user"] || "",
+      _campus: r["Campus if not Boston"] || "Boston",
+      _purpose: r["Question"] || "",
+    }));
+    if (!activeFilterNames) return tagged;
+    return tagged.filter(r => isTeamMember(r[asyncNameCol], activeFilterNames));
+  }, [asyncDataAll, activeFilterNames, asyncNameCol]);
+
+  // Combined consultations — normalize date and name columns for unified processing
+  const consultData = useMemo(() => {
+    const parts = [];
+    if (syncData) parts.push(...syncData.map(r => ({
+      ...r, _date: r[syncDateCol], _name: r[syncNameCol],
+      "College or Affiliation": r._college || r["College or Affiliation"] || "",
+    })));
+    if (asyncData) parts.push(...asyncData.map(r => ({
+      ...r, _date: r[asyncDateCol], _name: r[asyncNameCol],
+      "College or Affiliation": r._college || r["College or Affiliation"] || "",
+    })));
+    return parts.length ? parts : null;
+  }, [syncData, asyncData, syncDateCol, asyncDateCol, syncNameCol, asyncNameCol]);
+
+  const instrData = useMemo(() => {
+    if (!instrDataAll) return null;
+    if (!activeFilterNames) return instrDataAll;
+    return instrDataAll.filter(r => isTeamMember(r["Library instructor(s)"], activeFilterNames));
+  }, [instrDataAll, activeFilterNames]);
+
+  // evtData — filter will use the auto-detected name field; we filter it later after detection
+
+  // Detect all available months from data
+  const allMonths = useMemo(() => {
+    const set = new Set();
+    const addDates = (data, field) => { (data || []).forEach(r => { const k = getMonthKey(r[field]); if (k) set.add(k); }); };
+    addDates(syncDataAll, detectDateCol(syncDataAll));
+    addDates(asyncDataAll, detectDateCol(asyncDataAll));
+    addDates(instrDataAll, "Start Date");
+    addDates(evtDataRaw, detectDateCol(evtDataRaw));
+    return Array.from(set).sort();
+  }, [syncDataAll, asyncDataAll, instrDataAll, evtDataRaw]);
+
+  // Detect available years from data
+  const allYears = useMemo(() => {
+    const set = new Set();
+    allMonths.forEach(mk => set.add(mk.split("-")[0]));
+    return Array.from(set).sort();
+  }, [allMonths]);
+
+  // Build period options for each view type
+  const periodOptions = useMemo(() => {
+    if (viewType === "month") return allMonths.map(m => ({ value: m, label: formatMonthKey(m) }));
+    if (viewType === "calendar") return allYears.map(y => ({ value: y, label: "Calendar Year " + y }));
+    if (viewType === "review") {
+      // Review year X = Apr 1 of (X-1) to Mar 31 of X
+      // Available if we have any data in that range
+      const reviewYears = new Set();
+      allMonths.forEach(mk => {
+        const [y, m] = mk.split("-").map(Number);
+        // A month belongs to review year Y if: (year=Y-1 and month>=4) or (year=Y and month<=3)
+        if (m >= 4) reviewYears.add(String(y + 1));
+        if (m <= 3) reviewYears.add(String(y));
+      });
+      return Array.from(reviewYears).sort().map(y => ({ value: y, label: "Review Year " + y }));
+    }
+    return [];
+  }, [viewType, allMonths, allYears]);
+
+  // Auto-select period when view type changes or data loads
+  useEffect(() => {
+    if (periodOptions.length > 0) {
+      if (!viewPeriod || !periodOptions.find(p => p.value === viewPeriod)) {
+        setViewPeriod(periodOptions[periodOptions.length - 1].value);
+      }
+    }
+  }, [periodOptions, viewPeriod]);
+
+  // Compute the date range for the current period
+  const periodRange = useMemo(() => {
+    if (!viewPeriod) return { start: "", end: "" };
+    if (viewType === "month") return { start: viewPeriod + "-01", end: viewPeriod + "-31" };
+    if (viewType === "calendar") return { start: viewPeriod + "-01-01", end: viewPeriod + "-12-31" };
+    if (viewType === "review") {
+      const y = parseInt(viewPeriod, 10);
+      return { start: (y - 1) + "-04-01", end: y + "-03-31" };
+    }
+    return { start: "", end: "" };
+  }, [viewType, viewPeriod]);
+
+  // Compute comparison period (previous year's equivalent)
+  const comparisonRange = useMemo(() => {
+    if (!viewPeriod) return null;
+    if (viewType === "month") {
+      const [y, m] = viewPeriod.split("-");
+      const prevYearMonth = (Number(y) - 1) + "-" + m;
+      return { start: prevYearMonth + "-01", end: prevYearMonth + "-31", label: formatMonthKey(prevYearMonth) };
+    }
+    if (viewType === "calendar") {
+      const prevY = String(parseInt(viewPeriod, 10) - 1);
+      return { start: prevY + "-01-01", end: prevY + "-12-31", label: "Calendar Year " + prevY };
+    }
+    if (viewType === "review") {
+      const y = parseInt(viewPeriod, 10);
+      return { start: (y - 2) + "-04-01", end: (y - 1) + "-03-31", label: "Review Year " + (y - 1) };
+    }
+    return null;
+  }, [viewType, viewPeriod]);
+
+  // Universal date-in-range check
+  const dateInRange = useCallback((dateStr, range) => {
+    if (!dateStr || !range) return false;
+    const d = dateStr.substring(0, 10);
+    return d >= range.start && d <= range.end;
+  }, []);
+
+  // Filter data by current period
+  const filterByPeriod = useCallback((data, dateField, range) => {
+    if (!data || !range) return [];
+    return data.filter(r => dateInRange(r[dateField], range));
+  }, [dateInRange]);
+
+  // Period label for display
+  const periodLabel = useMemo(() => {
+    const opt = periodOptions.find(p => p.value === viewPeriod);
+    return opt ? opt.label : "";
+  }, [periodOptions, viewPeriod]);
+
+  const isMonthView = viewType === "month";
+
+  // ---- Filtered data for current period ----
+  const consultPeriod = useMemo(() => filterByPeriod(consultData, "_date", periodRange), [consultData, periodRange, filterByPeriod]);
+  const consultComparison = useMemo(() => filterByPeriod(consultData, "_date", comparisonRange), [consultData, comparisonRange, filterByPeriod]);
+
+  const syncPeriod = useMemo(() => consultPeriod.filter(r => r._consultType === "Synchronous"), [consultPeriod]);
+  const asyncPeriod = useMemo(() => consultPeriod.filter(r => r._consultType === "Asynchronous"), [consultPeriod]);
+
+  const instrPeriod = useMemo(() => filterByPeriod(instrData, "Start Date", periodRange), [instrData, periodRange, filterByPeriod]);
+  const instrComparison = useMemo(() => filterByPeriod(instrData, "Start Date", comparisonRange), [instrData, comparisonRange, filterByPeriod]);
+
+  // Detect events date field
+  const evtDateField = useMemo(() => {
+    if (!evtDataRaw || !evtDataRaw.length) return "Date";
+    const first = evtDataRaw[0];
+    if (first["Event Date"]) return "Event Date";
+    if (first["Date"]) return "Date";
+    if (first["Start Date"]) return "Start Date";
+    return Object.keys(first).find(k => k.toLowerCase().includes("date")) || "Date";
+  }, [evtDataRaw]);
+
+  // Events: primary name field is "Event Organizer", secondary is "Presenter"
+  const evtNameField = "Event Organizer";
+  const evtPresenterField = "Presenter";
+  const evtIdField = "Event ID";
+
+  const evtDeduped = useMemo(() => {
+    if (!evtDataRaw) return null;
+    const byId = {};
+    evtDataRaw.forEach(r => {
+      const id = r[evtIdField] || "";
+      if (!byId[id]) {
+        byId[id] = { ...r, _allOrganizers: new Set(), _allPresenters: new Set() };
+      }
+      const org = (r[evtNameField] || "").trim();
+      const pres = (r[evtPresenterField] || "").trim();
+      if (org) byId[id]._allOrganizers.add(org);
+      if (pres) byId[id]._allPresenters.add(pres);
+    });
+    return Object.values(byId);
+  }, [evtDataRaw]);
+
+  const evtData = useMemo(() => {
+    if (!evtDeduped) return null;
+    if (!activeFilterNames) return evtDeduped;
+    return evtDeduped.filter(r => {
+      for (const name of r._allOrganizers) { if (isTeamMember(name, activeFilterNames)) return true; }
+      for (const name of r._allPresenters) { if (isTeamMember(name, activeFilterNames)) return true; }
+      return false;
+    });
+  }, [evtDeduped, activeFilterNames]);
+
+  const evtPeriod = useMemo(() => filterByPeriod(evtData, evtDateField, periodRange), [evtData, evtDateField, periodRange, filterByPeriod]);
+  const evtComparison = useMemo(() => filterByPeriod(evtData, evtDateField, comparisonRange), [evtData, evtDateField, comparisonRange, filterByPeriod]);
+
+  // Months within the current period (for trend chart)
+  const periodMonths = useMemo(() => {
+    if (!periodRange) return allMonths;
+    return allMonths.filter(mk => {
+      const d = mk + "-15";
+      return d >= periodRange.start && d <= periodRange.end;
+    });
+  }, [allMonths, periodRange]);
+
+  // Aliases for backward compat with variable names used in the JSX
+  const consultMonth = consultPeriod;
+  const syncMonth = syncPeriod;
+  const asyncMonth = asyncPeriod;
+  const instrMonth = instrPeriod;
+  const evtMonth = evtPeriod;
+  const consultYACurrent = consultComparison;
+  const instrYACurrent = instrComparison;
+  const evtYACurrent = evtComparison;
+  // Person breakdowns
+  const consultByPerson = useMemo(() => {
+    const counts = {};
+    consultMonth.forEach(r => { const n = r._name || "Unknown"; counts[n] = (counts[n] || 0) + 1; });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [consultMonth]);
+
+  const instrByPerson = useMemo(() => {
+    const counts = {};
+    instrMonth.forEach(r => { const n = r["Library instructor(s)"] || "Unknown"; counts[n] = (counts[n] || 0) + 1; });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [instrMonth]);
+
+  // Events by person: each distinct event credits all its organizers and presenters
+  const evtByPerson = useMemo(() => {
+    const counts = {};
+    evtMonth.forEach(r => {
+      const credited = new Set();
+      for (const name of (r._allOrganizers || [])) { credited.add(name); }
+      for (const name of (r._allPresenters || [])) { credited.add(name); }
+      for (const name of credited) { counts[name] = (counts[name] || 0) + 1; }
+    });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [evtMonth]);
+
+  // Type breakdowns — consultations show sync/async split
+  const consultByType = useMemo(() => {
+    const syncCount = syncMonth.length;
+    const asyncCount = asyncMonth.length;
+    const result = [];
+    if (syncCount) result.push({ name: "Synchronous", value: syncCount });
+    if (asyncCount) result.push({ name: "Asynchronous", value: asyncCount });
+    return result;
+  }, [syncMonth, asyncMonth]);
+
+  const instrByType = useMemo(() => {
+    const counts = {};
+    instrMonth.forEach(r => { const t = r["Type of session"] || "Other"; counts[t] = (counts[t] || 0) + 1; });
+    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  }, [instrMonth]);
+
+  // Total attendees for instruction
+  const totalAttendees = useMemo(() => {
+    return instrMonth.reduce((s, r) => s + (parseInt(r["Estimated Number of Attendees"], 10) || 0), 0);
+  }, [instrMonth]);
+
+  // Instruction prep time (exact minutes from "Minutes on prep and followup" column)
+  const instrPrepMinutes = useMemo(() => {
+    return instrMonth.reduce((s, r) => {
+      const v = parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10);
+      return s + (isNaN(v) ? 0 : v);
+    }, 0);
+  }, [instrMonth]);
+
+  // Consult prep time (range-based from "Time spent" column where Type of Support = "Extra consult prep or followup")
+  // Returns { min, max } in minutes
+  const consultPrepRange = useMemo(() => {
+    const parseTimeRange = (val) => {
+      if (!val) return { min: 0, max: 0 };
+      const v = val.toLowerCase().trim();
+      if (v.includes("0") && v.includes("29")) return { min: 0, max: 29 };
+      if (v.includes("30") && v.includes("59")) return { min: 30, max: 59 };
+      if (v.startsWith("1") && v.includes("1:59")) return { min: 60, max: 119 };
+      if (v.startsWith("2") && v.includes("2:59")) return { min: 120, max: 179 };
+      if (v.startsWith("3") && v.includes("3:59")) return { min: 180, max: 239 };
+      if (v.includes("4 hours or more")) return { min: 240, max: 300 };
+      // Try to parse as generic "X - Y" pattern
+      const m = v.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);
+      if (m) return { min: parseInt(m[1], 10), max: parseInt(m[2], 10) };
+      return { min: 0, max: 0 };
+    };
+
+    let totalMin = 0, totalMax = 0;
+    asyncMonth.forEach(r => {
+      if ((r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
+        const range = parseTimeRange(r["Time spent"]);
+        totalMin += range.min;
+        totalMax += range.max;
+      }
+    });
+    return { min: totalMin, max: totalMax };
+  }, [asyncMonth]);
+
+  // Combined prep: instruction exact + consult range
+  const totalPrepMin = instrPrepMinutes + consultPrepRange.min;
+  const totalPrepMax = instrPrepMinutes + consultPrepRange.max;
+
+  const formatPrepTime = (minVal, maxVal) => {
+    const fmtHrs = (m) => (m / 60).toFixed(1);
+    if (minVal === maxVal) return fmtHrs(minVal) + " hrs";
+    return fmtHrs(minVal) + "–" + fmtHrs(maxVal) + " hrs";
+  };
+
+  const formatPrepTimeMins = (minVal, maxVal) => {
+    const fmtMins = (m) => m.toLocaleString();
+    if (minVal === maxVal) return fmtMins(minVal) + " minutes";
+    return fmtMins(minVal) + "–" + fmtMins(maxVal) + " minutes";
+  };
+
+  // Participant breakdown — normalize levels into common categories
+  const normalizeLevel = (val) => {
+    if (!val || val === "Unknown" || val === "N/A" || val === "-") return "Unknown";
+    const v = val.toLowerCase();
+    if (v.includes("undergraduate")) return "Undergraduate";
+    if (v.includes("graduate") && !v.includes("post")) return "Graduate";
+    if (v.includes("postgraduate") || v.includes("postdoc")) return "Postgraduate";
+    if (v.includes("faculty") || v.includes("professor")) return "Faculty";
+    if (v.includes("staff") || v.includes("administrative")) return "Staff";
+    if (v.includes("alum")) return "Alumni";
+    if (v.includes("community") || v.includes("professional")) return "Community";
+    if (v.includes("apprentice")) return "Apprentice";
+    return "Other";
+  };
+
+  // Current calendar year — needed by participant breakdowns and yearly totals
+  const currentYear = useMemo(() => {
+    if (!viewPeriod) return new Date().getFullYear();
+    return parseInt(viewPeriod.split("-")[0], 10);
+  }, [viewPeriod]);
+
+  const consultParticipants = useMemo(() => {
+    const counts = {};
+    consultMonth.forEach(r => {
+      const level = normalizeLevel(r._studentLevel);
+      counts[level] = (counts[level] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [consultMonth]);
+
+  const consultParticipantsYTD = useMemo(() => {
+    if (!consultData) return [];
+    const yStr = String(currentYear);
+    const counts = {};
+    consultData.filter(r => (r._date || "").startsWith(yStr)).forEach(r => {
+      const level = normalizeLevel(r._studentLevel);
+      counts[level] = (counts[level] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [consultData, currentYear]);
+
+  const consultParticipantsPrevYear = useMemo(() => {
+    if (!consultData) return [];
+    const yStr = String(currentYear - 1);
+    const counts = {};
+    consultData.filter(r => (r._date || "").startsWith(yStr)).forEach(r => {
+      const level = normalizeLevel(r._studentLevel);
+      counts[level] = (counts[level] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [consultData, currentYear]);
+
+  const instrParticipants = useMemo(() => {
+    const counts = {};
+    instrMonth.forEach(r => {
+      const raw = r["Participants"] || "Unknown";
+      const primary = raw.split(";")[0].trim();
+      const level = normalizeLevel(primary);
+      counts[level] = (counts[level] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [instrMonth]);
+
+  // Yearly totals
+
+  const filterByYear = useCallback((data, dateField, year) => {
+    if (!data) return [];
+    const yStr = String(year);
+    return data.filter(r => {
+      const d = r[dateField] || "";
+      return d.startsWith(yStr);
+    });
+  }, []);
+
+  const parseTimeRange = (val) => {
+    if (!val) return { min: 0, max: 0 };
+    const v = val.toLowerCase().trim();
+    if (v.includes("0") && v.includes("29")) return { min: 0, max: 29 };
+    if (v.includes("30") && v.includes("59")) return { min: 30, max: 59 };
+    if (v.startsWith("1") && v.includes("1:59")) return { min: 60, max: 119 };
+    if (v.startsWith("2") && v.includes("2:59")) return { min: 120, max: 179 };
+    if (v.startsWith("3") && v.includes("3:59")) return { min: 180, max: 239 };
+    if (v.includes("4 hours or more")) return { min: 240, max: 300 };
+    const m = v.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);
+    if (m) return { min: parseInt(m[1], 10), max: parseInt(m[2], 10) };
+    return { min: 0, max: 0 };
+  };
+
+  const yearlyTotals = useMemo(() => {
+    const calcYear = (year) => {
+      const yStr = String(year);
+      const consults = consultData ? consultData.filter(r => (r._date || "").startsWith(yStr)).length : 0;
+      const instrRows = instrData ? instrData.filter(r => (r["Start Date"] || "").startsWith(yStr)) : [];
+      const instr = instrRows.length;
+      const attendees = instrRows.reduce((s, r) => s + (parseInt(r["Estimated Number of Attendees"], 10) || 0), 0);
+      const events = evtData ? evtData.filter(r => {
+        const d = r[evtDateField] || "";
+        return d.startsWith(yStr);
+      }).length : 0;
+      const instrPrep = instrRows.reduce((s, r) => s + (parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) || 0), 0);
+      const asyncYear = asyncData ? asyncData.filter(r => (r[asyncDateCol] || "").startsWith(yStr)) : [];
+      let consultPrepMin = 0, consultPrepMax = 0;
+      asyncYear.forEach(r => {
+        if ((r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
+          const range = parseTimeRange(r["Time spent"]);
+          consultPrepMin += range.min;
+          consultPrepMax += range.max;
+        }
+      });
+      return { consults, instr, attendees, events, instrPrep, consultPrepMin, consultPrepMax };
+    };
+    return {
+      current: calcYear(currentYear),
+      previous: calcYear(currentYear - 1),
+      currentYear,
+      previousYear: currentYear - 1,
+    };
+  }, [consultData, instrData, evtData, asyncData, currentYear, evtDateField, asyncDateCol]);
+
+  const handleFile = useCallback((key, text, name) => {
+    if (key === "sync") { setSyncRaw(text); setSyncName(name); }
+    else if (key === "async") { setAsyncRaw(text); setAsyncName(name); }
+    else if (key === "instruction") { setInstrRaw(text); setInstrName(name); }
+    else if (key === "events") { setEvtRaw(text); setEvtName(name); }
+  }, []);
+
+  const hasData = consultData || instrData || evtData;
+
+  return (
+    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#F5F3EF", minHeight: "100vh", padding: "0 0 40px 0" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #1B3A4B 0%, #2D5A7B 60%, #3A7CA5 100%)", padding: "32px 28px 28px", color: "#fff" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7, marginBottom: 6 }}>Library Services</div>
+        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Activity Dashboard</div>
+        <div style={{ fontSize: 13, opacity: 0.65, marginTop: 6 }}>Research & Instruction Group</div>
+      </div>
+
+      <div style={{ padding: "0 20px", maxWidth: 1000, margin: "0 auto" }}>
+
+        {/* Upload Area */}
+        <div style={{ margin: "20px 0", background: "#fff", borderRadius: 16, padding: "20px 18px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Load Data Files
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <DropZone label="Consults (Sync)" fileKey="sync" onFile={handleFile} fileName={syncName} color="#2D5A7B" />
+            <DropZone label="Consults (Async)" fileKey="async" onFile={handleFile} fileName={asyncName} color="#3A7CA5" />
+            <DropZone label="Instruction Sessions" fileKey="instruction" onFile={handleFile} fileName={instrName} color="#D4853F" />
+            <DropZone label="Events" fileKey="events" onFile={handleFile} fileName={evtName} color="#5B8C5A" />
+          </div>
+          {evtData && evtData.length > 0 && evtData[0][evtNameField] === undefined && (
+            <div style={{ marginTop: 10, padding: "10px 14px", background: "#FFF8E1", borderRadius: 8, fontSize: 12, color: "#8B6914" }}>
+              ⚠ The events file doesn't have an "Event Organizer" column. Per-person breakdown won't be available for events. Expected columns: "Event Organizer" and optionally "Presenter".
+            </div>
+          )}
+        </div>
+
+        {!hasData && (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "#999" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "#777" }}>Drop your CSV files above to get started</div>
+            <div style={{ fontSize: 13, marginTop: 6 }}>Consultations (sync & async), instruction sessions, and events</div>
+          </div>
+        )}
+
+        {hasData && (
+          <>
+            {/* View Selector + Team Toggle */}
+            <div style={{ margin: "16px 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: "#555" }}>View:</label>
+              <select value={viewType} onChange={e => { setViewType(e.target.value); setViewPeriod(null); }}
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, color: "#2D5A7B", background: "#fff", cursor: "pointer" }}>
+                <option value="month">Month</option>
+                <option value="calendar">Calendar Year</option>
+                <option value="review">Review Year</option>
+              </select>
+              <select value={viewPeriod || ""} onChange={e => setViewPeriod(e.target.value)}
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, color: "#2D5A7B", background: "#fff", cursor: "pointer" }}>
+                {periodOptions.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 0, borderRadius: 8, overflow: "hidden", border: "1px solid #ddd", marginLeft: 4 }}>
+                {["STEM&E", "Online Learning", "ASSH", "All Staff"].map((team, idx) => {
+                  const isActive = selectedTeams.includes(team);
+                  return (
+                    <button key={team} onClick={() => toggleTeam(team)}
+                      style={{ padding: "7px 12px", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", cursor: "pointer", border: "none",
+                        borderLeft: idx > 0 ? "1px solid #ddd" : "none",
+                        background: isActive ? "#2D5A7B" : "#fff", color: isActive ? "#fff" : "#777", transition: "all 0.2s", whiteSpace: "nowrap" }}>
+                      {team}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {comparisonRange && (
+                <span style={{ fontSize: 12, color: "#aaa" }}>
+                  {"compared to " + comparisonRange.label}
+                </span>
+              )}
+            </div>
+
+            {/* KPI Cards */}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
+              {consultData && <KPICard title="Consultations" value={consultMonth.length}
+                sub={syncMonth.length + " sync · " + asyncMonth.length + " async" + (consultYACurrent.length ? " | " + comparisonRange.label + ": " + consultYACurrent.length : "")}
+                color="#2D5A7B" icon="💬"
+                onClick={() => setDrilldown({
+                  title: \`All Consultations — \${periodLabel}\`,
+                  rows: consultMonth, color: "#2D5A7B",
+                  columns: [
+                    { key: "_date", label: "Date", width: 90, render: v => v ? v.substring(0, 10) : "—" },
+                    { key: "_name", label: "Staff", width: 130 },
+                    { key: "_consultType", label: "Sync/Async", width: 90 },
+                    { key: "_college", label: "College", width: 150, render: v => v || "—" },
+                    { key: "_studentLevel", label: "Level", width: 120, render: v => v || "—" },
+                    { key: "_campus", label: "Campus", width: 80, render: v => v || "—" },
+                    { key: "_purpose", label: "Purpose", width: null, render: v => v || "—" },
+                  ],
+                })} />}
+              {instrData && <KPICard title="Instruction Sessions" value={instrMonth.length} sub={instrYACurrent.length ? comparisonRange.label + ": " + instrYACurrent.length : ""} color="#D4853F" icon="📚"
+                onClick={() => setDrilldown({
+                  title: \`Instruction Sessions — \${periodLabel}\`,
+                  rows: instrMonth, color: "#D4853F",
+                  columns: [
+                    { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                    { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
+                    { key: "Type of session", label: "Session Type", width: 140 },
+                    { key: "Course name and number", label: "Course", width: null },
+                    { key: "College", label: "College", width: 150 },
+                    { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
+                    { key: "Campus", label: "Campus", width: 90 },
+                  ],
+                })} />}
+              {instrData && <KPICard title="Est. Attendees" value={totalAttendees.toLocaleString()} sub="instruction sessions" color="#7B68AE" icon="👥"
+                onClick={() => setDrilldown({
+                  title: \`Instruction Sessions (by Attendees) — \${periodLabel}\`,
+                  rows: [...instrMonth].sort((a, b) => (parseInt(b["Estimated Number of Attendees"]) || 0) - (parseInt(a["Estimated Number of Attendees"]) || 0)),
+                  color: "#7B68AE",
+                  columns: [
+                    { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
+                    { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                    { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
+                    { key: "Course name and number", label: "Course", width: null },
+                    { key: "College", label: "College", width: 150 },
+                    { key: "Type of session", label: "Session Type", width: 120 },
+                  ],
+                })} />}
+              {evtData && <KPICard title="Events" value={evtMonth.length} sub={evtYACurrent.length ? comparisonRange.label + ": " + evtYACurrent.length : ""} color="#5B8C5A" icon="📅"
+                onClick={() => setDrilldown({
+                  title: \`Events — \${periodLabel}\`,
+                  rows: evtMonth, color: "#5B8C5A",
+                  columns: (() => {
+                    if (!evtMonth.length) return [];
+                    const keys = Object.keys(evtMonth[0]).filter(k => !k.startsWith("_all"));
+                    const dateCol = keys.find(k => k.toLowerCase().includes("date")) || keys[0];
+                    return [
+                      { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                      { key: "Event Organizer", label: "Organizer", width: 150 },
+                      { key: "Presenter", label: "Presenter", width: 150 },
+                      ...keys.filter(k => !["Event Organizer", "Presenter", dateCol].includes(k) && !k.startsWith("_")).slice(0, 3).map(k => ({ key: k, label: k, width: null })),
+                    ];
+                  })(),
+                })} />}
+            </div>
+
+            {/* Prep Time Cards */}
+            {(instrData || asyncData) && (instrPrepMinutes > 0 || consultPrepRange.max > 0) && (
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
+                {instrPrepMinutes > 0 && <KPICard title="Instruction Prep & Followup" value={(instrPrepMinutes / 60).toFixed(1) + " hrs"}
+                  sub={instrPrepMinutes.toLocaleString() + " minutes"}
+                  color="#D4853F" icon="⏱"
+                  onClick={() => {
+                    const instrPrepRows = instrMonth.filter(r => parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) > 0);
+                    setDrilldown({
+                      title: "Instruction Prep & Followup — " + periodLabel,
+                      rows: instrPrepRows, color: "#D4853F",
+                      columns: [
+                        { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                        { key: "Library instructor(s)", label: "Instructor", width: 160 },
+                        { key: "Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)", label: "Minutes", width: 80 },
+                        { key: "Course name and number", label: "Course", width: null },
+                        { key: "College", label: "College", width: 150 },
+                      ],
+                    });
+                  }} />}
+                {consultPrepRange.max > 0 && <KPICard title="Consult Prep & Followup" value={formatPrepTime(consultPrepRange.min, consultPrepRange.max)}
+                  sub={formatPrepTimeMins(consultPrepRange.min, consultPrepRange.max)}
+                  color="#3A7CA5" icon="⏱"
+                  onClick={() => {
+                    const consultPrepRows = asyncMonth.filter(r => (r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
+                    setDrilldown({
+                      title: "Consult Prep & Followup — " + periodLabel,
+                      rows: consultPrepRows, color: "#3A7CA5",
+                      columns: [
+                        { key: asyncDateCol, label: "Date", width: 90 },
+                        { key: asyncNameCol, label: "Staff", width: 140 },
+                        { key: "Time spent", label: "Time", width: 120 },
+                        { key: "Question", label: "Question", width: null },
+                        { key: "College or Affiliation", label: "College", width: 150 },
+                      ],
+                    });
+                  }} />}
+              </div>
+            )}
+
+            {/* Participant Breakdown */}
+            {(consultParticipants.length > 0 || instrParticipants.length > 0) && (
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, margin: "16px 0" }}>
+                {consultParticipants.length > 0 && (
+                  <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #3A7CA5" }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{"💬 Consultation Participants"}</div>
+                    <div style={{ display: "flex", gap: 16 }}>
+                      <ParticipantColumn data={consultParticipants} label={periodLabel} total={consultMonth.length} color="#3A7CA5" />
+                      <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
+                      <ParticipantColumn data={consultParticipantsYTD} label={currentYear + " YTD"} total={consultParticipantsYTD.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" />
+                      <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
+                      <ParticipantColumn data={consultParticipantsPrevYear} label={(currentYear - 1) + ""} total={consultParticipantsPrevYear.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" dim={consultParticipantsPrevYear.length === 0} />
+                    </div>
+                  </div>
+                )}
+                {instrParticipants.length > 0 && (
+                  <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #D4853F" }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>📚 Instruction Participants — {periodLabel}</div>
+                    {instrParticipants.map(({ name, count }) => (
+                      <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f5f5f5" }}>
+                        <span style={{ fontSize: 13, color: "#444" }}>{name}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: Math.max(4, (count / Math.max(...instrParticipants.map(p => p.count))) * 80), height: 8, borderRadius: 4, background: "#D4853F" }} />
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#D4853F", fontFamily: "'DM Mono', monospace", minWidth: 28, textAlign: "right" }}>{count}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 11, color: "#aaa", marginTop: 8 }}>Total: {instrMonth.length} sessions</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Yearly Totals */}
+            {hasData && (
+              <div style={{ background: "#fff", borderRadius: 14, padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", margin: "16px 0", borderLeft: "4px solid #555" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 14 }}>📅 Year-to-Date Totals</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "2px solid #e0e0e0" }}>
+                        <th style={{ textAlign: "left", padding: "8px 10px", color: "#555", fontWeight: 600, fontSize: 12 }}>Metric</th>
+                        <th style={{ textAlign: "right", padding: "8px 10px", color: "#555", fontWeight: 600, fontSize: 12 }}>{yearlyTotals.currentYear}</th>
+                        <th style={{ textAlign: "right", padding: "8px 10px", color: "#555", fontWeight: 600, fontSize: 12 }}>{yearlyTotals.previousYear}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { label: "Consultations", cur: yearlyTotals.current.consults, prev: yearlyTotals.previous.consults, color: "#2D5A7B" },
+                        { label: "Instruction Sessions", cur: yearlyTotals.current.instr, prev: yearlyTotals.previous.instr, color: "#D4853F" },
+                        { label: "Est. Attendees", cur: yearlyTotals.current.attendees, prev: yearlyTotals.previous.attendees, color: "#7B68AE" },
+                        { label: "Events", cur: yearlyTotals.current.events, prev: yearlyTotals.previous.events, color: "#5B8C5A" },
+                        { label: "Instruction Prep Time", isPrep: true, curMin: yearlyTotals.current.instrPrep, curMax: yearlyTotals.current.instrPrep, prevMin: yearlyTotals.previous.instrPrep, prevMax: yearlyTotals.previous.instrPrep, color: "#D4853F" },
+                        { label: "Consult Prep Time", isPrep: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#3A7CA5" },
+                      ].map((row, i) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                          <td style={{ padding: "8px 10px", color: "#444", fontWeight: 500 }}>{row.label}</td>
+                          {row.isPrep ? (
+                            <>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>
+                                {formatPrepTime(row.curMin, row.curMax)}
+                              </td>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>
+                                {formatPrepTime(row.prevMin, row.prevMax)}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>{row.cur.toLocaleString()}</td>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>
+                                {row.prev.toLocaleString()}
+                                {row.cur > 0 && row.prev > 0 && (() => {
+                                  const pct = ((row.cur - row.prev) / row.prev * 100).toFixed(0);
+                                  const up = row.cur > row.prev;
+                                  return <span style={{ fontSize: 11, marginLeft: 6, color: up ? "#2a7" : "#c55" }}>{up ? "↑" : "↓"}{Math.abs(pct)}%</span>;
+                                })()}
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 11, color: "#aaa", marginTop: 8 }}>Note: {yearlyTotals.previousYear} totals reflect only the data available in loaded files</div>
+              </div>
+            )}
+
+            {/* Comparison bars */}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
+              {consultData && <ComparisonBar currentData={consultMonth.length} yearAgoData={consultYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && consultYACurrent.length > 0 ? comparisonRange.label : null} label="Consultations" color="#2D5A7B" />}
+              {instrData && <ComparisonBar currentData={instrMonth.length} yearAgoData={instrYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && instrYACurrent.length > 0 ? comparisonRange.label : null} label="Instruction" color="#D4853F" />}
+              {evtData && <ComparisonBar currentData={evtMonth.length} yearAgoData={evtYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && evtYACurrent.length > 0 ? comparisonRange.label : null} label="Events" color="#5B8C5A" />}
+            </div>
+
+            {/* Trend */}
+            <div style={{ margin: "16px 0" }}>
+              <TrendChart referenceData={consultData} instructionData={instrData} eventsData={evtData} allMonths={periodMonths} />
+            </div>
+
+            {/* Consultation breakdowns — sync/async + by college on one row */}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(250px, 1fr) minmax(350px, 2fr)", gap: 14, margin: "16px 0" }}>
+              {consultByType.length > 0 && <TypeBreakdownChart data={consultByType} title={"Sync vs Async (" + periodLabel + ")"} colors={["#2D5A7B", "#3A7CA5"]} />}
+              {consultMonth.length > 0 && (() => {
+                const colleges = {};
+                const getCollege = (r) => r._college || r["College or Affiliation"] || r["College"] || "Unknown";
+                consultMonth.forEach(r => {
+                  const c = getCollege(r) || "Unknown";
+                  colleges[c] = (colleges[c] || 0) + 1;
+                });
+                const data = Object.entries(colleges).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 12);
+                const handleBarClick = (barData) => {
+                  if (!barData || !barData.name) return;
+                  const collegeName = barData.name;
+                  const matchingRows = consultMonth.filter(r => (getCollege(r) || "Unknown") === collegeName);
+                  setDrilldown({
+                    title: "Consultations — " + collegeName + " (" + periodLabel + ")",
+                    rows: matchingRows,
+                    color: "#2D5A7B",
+                    columns: [
+                      { key: "_date", label: "Date", width: 90, render: v => v ? v.substring(0, 10) : "—" },
+                      { key: "_name", label: "Staff", width: 130 },
+                      { key: "_consultType", label: "Sync/Async", width: 90 },
+                      { key: "_studentLevel", label: "Level", width: 120, render: v => v || "—" },
+                      { key: "_campus", label: "Campus", width: 80, render: v => v || "—" },
+                      { key: "_purpose", label: "Purpose", width: null, render: v => v || "—" },
+                    ],
+                  });
+                };
+                return (
+                  <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif" }}>{"Consultations by College — " + periodLabel}</div>
+                      <div style={{ fontSize: 11, color: "#aaa" }}>Click a bar to see records</div>
+                    </div>
+                    <ResponsiveContainer width="100%" height={Math.max(200, data.length * 32)}>
+                      <BarChart data={data} layout="vertical" margin={{ left: 20, right: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={155} />
+                        <Tooltip />
+                        <Bar dataKey="count" fill="#2D5A7B" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(d) => handleBarClick(d)} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Instruction type breakdown */}
+            {instrByType.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, margin: "16px 0" }}>
+                <TypeBreakdownChart data={instrByType} title={"Instruction — Session Type (" + periodLabel + ")"} colors={PALETTE.slice(3)} />
+              </div>
+            )}
+
+            {/* Person breakdowns */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, margin: "16px 0" }}>
+              {consultByPerson.length > 0 && <PersonTable data={consultByPerson} label={"Consultations by Person — " + periodLabel} color="#2D5A7B" />}
+              {instrByPerson.length > 0 && <PersonTable data={instrByPerson} label={"Instruction Sessions by Person — " + periodLabel} color="#D4853F" />}
+              {evtByPerson.length > 0 && <PersonTable data={evtByPerson} label={"Events by Person — " + periodLabel} color="#5B8C5A" />}
+            </div>
+
+            {/* College breakdown for instruction */}
+            {instrMonth.length > 0 && (() => {
+              const colleges = {};
+              instrMonth.forEach(r => { const c = r["College"] || "Unknown"; colleges[c] = (colleges[c] || 0) + 1; });
+              const data = Object.entries(colleges).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 12);
+              const handleBarClick = (barData) => {
+                if (!barData || !barData.name) return;
+                const collegeName = barData.name;
+                const matchingRows = instrMonth.filter(r => (r["College"] || "Unknown") === collegeName);
+                setDrilldown({
+                  title: \`Instruction Sessions — \${collegeName} (\${periodLabel})\`,
+                  rows: matchingRows,
+                  color: "#D4853F",
+                  columns: [
+                    { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                    { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
+                    { key: "Type of session", label: "Session Type", width: 140 },
+                    { key: "Course name and number", label: "Course", width: null },
+                    { key: "Name of professor or contact", label: "Professor", width: 140 },
+                    { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
+                  ],
+                });
+              };
+              return (
+                <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", margin: "16px 0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif" }}>Instruction Sessions by College — {periodLabel}</div>
+                    <div style={{ fontSize: 11, color: "#aaa" }}>Click a bar to see records</div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={Math.max(200, data.length * 32)}>
+                    <BarChart data={data} layout="vertical" margin={{ left: 180 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis type="number" tick={{ fontSize: 11 }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={175} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#D4853F" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(d) => handleBarClick(d)} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              );
+            })()}
+            {/* ——— Detail Lists ——— */}
+            {syncMonth.length > 0 && <DetailList
+              title={\`Synchronous Consultations — \${periodLabel}\`}
+              color="#2D5A7B"
+              rows={syncMonth}
+              columns={[
+                { key: "Date", label: "Date", width: 90 },
+                { key: "Entered By", label: "Staff", width: 140 },
+                { key: "Name", label: "Patron", width: 120 },
+                { key: "_studentLevel", label: "Level", width: 130 },
+                { key: "_college", label: "College", width: 170 },
+                { key: "_campus", label: "Campus", width: 90 },
+                { key: "_location", label: "Location", width: 80 },
+                { key: "_purpose", label: "Purpose", width: null },
+                { key: "_showedUp", label: "Showed Up", width: 80 },
+              ]}
+            />}
+
+            {asyncMonth.length > 0 && <DetailList
+              title={\`Asynchronous Consultations — \${periodLabel}\`}
+              color="#3A7CA5"
+              rows={asyncMonth}
+              columns={[
+                { key: asyncDateCol, label: "Date", width: 90 },
+                { key: asyncNameCol, label: "Staff", width: 140 },
+                { key: "Type of Support", label: "Type", width: 160 },
+                { key: "Question", label: "Question", width: null },
+                { key: "Type of user", label: "Patron Type", width: 120 },
+                { key: "College or Affiliation", label: "College", width: 160 },
+                { key: "Time spent", label: "Time", width: 110 },
+              ]}
+            />}
+
+            {instrMonth.length > 0 && <DetailList
+              title={\`Instruction Sessions — \${periodLabel}\`}
+              color="#D4853F"
+              rows={instrMonth}
+              columns={[
+                { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
+                { key: "Type of session", label: "Session Type", width: 150 },
+                { key: "Course name and number", label: "Course", width: null },
+                { key: "College", label: "College", width: 160 },
+                { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
+                { key: "Campus", label: "Campus", width: 90 },
+              ]}
+            />}
+
+            {evtMonth.length > 0 && <DetailList
+              title={\`Events — \${periodLabel}\`}
+              color="#5B8C5A"
+              rows={evtMonth}
+              columns={(() => {
+                if (!evtMonth.length) return [];
+                const keys = Object.keys(evtMonth[0]);
+                const dateCol = keys.find(k => k.toLowerCase().includes("date")) || keys[0];
+                const cols = [
+                  { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                  { key: "Event Organizer", label: "Organizer", width: 150 },
+                  { key: "Presenter", label: "Presenter", width: 150 },
+                ];
+                const shown = new Set([dateCol, "Event Organizer", "Presenter"]);
+                const extra = keys.filter(k => !shown.has(k)).slice(0, 3);
+                return [...cols, ...extra.map(k => ({ key: k, label: k, width: null }))];
+              })()}
+            />}
+
+          </>
+        )}
+
+        <div style={{ textAlign: "center", fontSize: 11, color: "#bbb", marginTop: 32, padding: "16px 0", borderTop: "1px solid #e8e8e8" }}>
+          Library Services Activity Dashboard · Data sourced from Springshare
+        </div>
+      </div>
+
+      {drilldown && (
+        <DrilldownModal
+          title={drilldown.title}
+          rows={drilldown.rows}
+          columns={drilldown.columns}
+          color={drilldown.color}
+          onClose={() => setDrilldown(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+
+try {
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(React.createElement(LibraryDashboard));
+} catch(e) {
+  console.error('Render error:', e);
+  document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#c55"><h2>Render Error</h2><pre style="margin-top:12px;text-align:left;font-size:12px;max-width:600px;margin-left:auto;margin-right:auto;overflow:auto;background:#f8f8f8;padding:16px;border-radius:8px">' + e.stack + '</pre></div>';
+}
+`;
+
+      try {
+        var compiled = Babel.transform(jsxCode, { presets: ['react'] }).code;
+        eval(compiled);
+      } catch(e) {
+        console.error('Compile error:', e);
+        showError('JSX compilation failed: ' + e.message);
+      }
+    }
+
+    window.addEventListener('load', bootDashboard);
+  </script>
+</body>
+</html>
