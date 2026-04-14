@@ -24,11 +24,15 @@
   </div>
 
   <script>var _loadErrors = [];</script>
-  <script src="https://unpkg.com/react/umd/react.production.min.js" onerror="_loadErrors.push('React')"></script>
-  <script src="https://unpkg.com/react-dom/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
-  <script src="https://unpkg.com/react-is/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
-  <script src="https://unpkg.com/recharts/umd/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
+  <!-- React 18 from cdnjs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" onerror="_loadErrors.push('React')"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
+  <!-- react-is from unpkg (not on cdnjs) -->
+  <script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
+  <!-- Recharts from cdnjs (verified working) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/3.2.1/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
+  <!-- Babel standalone from cdnjs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
 
   <script>
     function showError(msg) {
@@ -36,8 +40,7 @@
         '<div style="padding:40px;text-align:center;color:#c55;font-family:sans-serif;max-width:600px;margin:0 auto">' +
         '<h2 style="margin-bottom:12px">Dashboard failed to load</h2>' +
         '<p>' + msg + '</p>' +
-        '<p style="margin-top:16px;color:#888;font-size:13px">This dashboard needs an internet connection to load its charting libraries.</p>' +
-        '<p style="margin-top:8px;color:#888;font-size:13px">If you are connected and still seeing this error, try a different browser (Chrome or Edge recommended).</p></div>';
+        '<p style="margin-top:16px;color:#888;font-size:13px">This dashboard needs an internet connection to load its charting libraries.</p></div>';
     }
 
     function bootDashboard() {
