@@ -24,14 +24,10 @@
   </div>
 
   <script>var _loadErrors = [];</script>
-  <!-- React 18 from cdnjs -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" onerror="_loadErrors.push('React')"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
-  <!-- react-is from unpkg (not on cdnjs) -->
   <script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
-  <!-- Recharts from cdnjs -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/3.2.1/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
-  <!-- Babel standalone from cdnjs -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
 
   <script>
@@ -1006,7 +1002,11 @@ function LibraryDashboard() {
   }, [evtMonth]);
 
   const evtActualAttendance = useMemo(() => {
-    return evtMonth.reduce((s, r) => s + (parseInt(r["Actual Attendance"] || "0", 10) || 0), 0);
+    return evtMonth.reduce((s, r) => {
+      const inPerson = parseInt(r["Actual Attendance (In Person)"] || "0", 10) || 0;
+      const online = parseInt(r["Actual Attendance (Online)"] || "0", 10) || 0;
+      return s + inPerson + online;
+    }, 0);
   }, [evtMonth]);
 
   // Instruction prep time (exact minutes from "Minutes on prep and followup" column)
@@ -1348,7 +1348,8 @@ function LibraryDashboard() {
                       { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
                       { key: "Event Organizer", label: "Organizer", width: 150 },
                       { key: "Confirmed Registrations", label: "Registrations", width: 100 },
-                      { key: "Actual Attendance", label: "Attendance", width: 100 },
+                      { key: "Actual Attendance (In Person)", label: "Attendance (IP)", width: 100 },
+                      { key: "Actual Attendance (Online)", label: "Attendance (Online)", width: 100 },
                       { key: "Presenter", label: "Presenter", width: 150 },
                     ];
                   })(),
