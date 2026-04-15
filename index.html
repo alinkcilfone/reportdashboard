@@ -29,7 +29,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
   <!-- react-is from unpkg (not on cdnjs) -->
   <script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
-  <!-- Recharts from cdnjs (verified working) -->
+  <!-- Recharts from cdnjs -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/3.2.1/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
   <!-- Babel standalone from cdnjs -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
@@ -89,12 +89,16 @@ function nameMatchesList(nameStr, nameList) {
   const lower = nameStr.toLowerCase().trim();
   return nameList.some(tm => {
     if (lower === tm) return true;
+    if (lower.includes(tm)) return true;
     const parts = tm.split(" ");
     if (parts.length >= 2) {
-      const first = parts[0];
-      const last = parts.slice(1).join(" ");
-      if (lower.includes(last + ", " + first)) return true;
-      if (lower.includes(tm)) return true;
+      // Try all possible splits: for "philip espinola coombs"
+      // try "espinola coombs, philip" AND "coombs, philip espinola"
+      for (let i = 1; i < parts.length; i++) {
+        const first = parts.slice(0, i).join(" ");
+        const last = parts.slice(i).join(" ");
+        if (lower.includes(last + ", " + first)) return true;
+      }
     }
     return false;
   });
@@ -337,7 +341,7 @@ function KPICard({ title, value, sub, color, icon, onClick }) {
       onMouseLeave={e => { if (onClick) { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.06)"; e.currentTarget.style.transform = "none"; } }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{icon} {title}</div>
       <div style={{ fontSize: 34, fontWeight: 700, color: color, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 4, whiteSpace: "pre-line" }}>{sub}</div>}
       {onClick && <div style={{ fontSize: 10, color: "#bbb", marginTop: 6 }}>Click to view records</div>}
     </div>
   );
@@ -919,11 +923,19 @@ function LibraryDashboard() {
   // Months within the current period (for trend chart)
   const periodMonths = useMemo(() => {
     if (!periodRange) return allMonths;
+    if (viewType === "month" && viewPeriod) {
+      // Show last 4 months including the selected month
+      const idx = allMonths.indexOf(viewPeriod);
+      if (idx >= 0) {
+        const start = Math.max(0, idx - 3);
+        return allMonths.slice(start, idx + 1);
+      }
+    }
     return allMonths.filter(mk => {
       const d = mk + "-15";
       return d >= periodRange.start && d <= periodRange.end;
     });
-  }, [allMonths, periodRange]);
+  }, [allMonths, periodRange, viewType, viewPeriod]);
 
   // Aliases for backward compat with variable names used in the JSX
   const consultMonth = consultPeriod;
@@ -979,6 +991,23 @@ function LibraryDashboard() {
   const totalAttendees = useMemo(() => {
     return instrMonth.reduce((s, r) => s + (parseInt(r["Estimated Number of Attendees"], 10) || 0), 0);
   }, [instrMonth]);
+
+  // Event prep time (plain number in "Event Note" column)
+  const evtPrepMinutes = useMemo(() => {
+    return evtMonth.reduce((s, r) => {
+      const v = parseInt(r["Event Note"] || "0", 10);
+      return s + (isNaN(v) ? 0 : v);
+    }, 0);
+  }, [evtMonth]);
+
+  // Event participant totals
+  const evtConfirmedRegistrations = useMemo(() => {
+    return evtMonth.reduce((s, r) => s + (parseInt(r["Confirmed Registrations"] || "0", 10) || 0), 0);
+  }, [evtMonth]);
+
+  const evtActualAttendance = useMemo(() => {
+    return evtMonth.reduce((s, r) => s + (parseInt(r["Actual Attendance"] || "0", 10) || 0), 0);
+  }, [evtMonth]);
 
   // Instruction prep time (exact minutes from "Minutes on prep and followup" column)
   const instrPrepMinutes = useMemo(() => {
@@ -1128,11 +1157,13 @@ function LibraryDashboard() {
       const instrRows = instrData ? instrData.filter(r => (r["Start Date"] || "").startsWith(yStr)) : [];
       const instr = instrRows.length;
       const attendees = instrRows.reduce((s, r) => s + (parseInt(r["Estimated Number of Attendees"], 10) || 0), 0);
-      const events = evtData ? evtData.filter(r => {
+      const evtRows = evtData ? evtData.filter(r => {
         const d = r[evtDateField] || "";
         return d.startsWith(yStr);
-      }).length : 0;
+      }) : [];
+      const events = evtRows.length;
       const instrPrep = instrRows.reduce((s, r) => s + (parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) || 0), 0);
+      const evtPrep = evtRows.reduce((s, r) => s + (parseInt(r["Event Note"] || "0", 10) || 0), 0);
       const asyncYear = asyncData ? asyncData.filter(r => (r[asyncDateCol] || "").startsWith(yStr)) : [];
       let consultPrepMin = 0, consultPrepMax = 0;
       asyncYear.forEach(r => {
@@ -1142,7 +1173,7 @@ function LibraryDashboard() {
           consultPrepMax += range.max;
         }
       });
-      return { consults, instr, attendees, events, instrPrep, consultPrepMin, consultPrepMax };
+      return { consults, instr, attendees, events, instrPrep, evtPrep, consultPrepMin, consultPrepMax };
     };
     return {
       current: calcYear(currentYear),
@@ -1237,7 +1268,7 @@ function LibraryDashboard() {
               )}
             </div>
 
-            {/* KPI Cards */}
+            {/* KPI Cards - Row 1: Counts */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
               {consultData && <KPICard title="Consultations" value={consultMonth.length}
                 sub={syncMonth.length + " sync · " + asyncMonth.length + " async" + (consultYACurrent.length ? " | " + comparisonRange.label + ": " + consultYACurrent.length : "")}
@@ -1269,20 +1300,6 @@ function LibraryDashboard() {
                     { key: "Campus", label: "Campus", width: 90 },
                   ],
                 })} />}
-              {instrData && <KPICard title="Est. Attendees" value={totalAttendees.toLocaleString()} sub="instruction sessions" color="#7B68AE" icon="👥"
-                onClick={() => setDrilldown({
-                  title: \`Instruction Sessions (by Attendees) — \${periodLabel}\`,
-                  rows: [...instrMonth].sort((a, b) => (parseInt(b["Estimated Number of Attendees"]) || 0) - (parseInt(a["Estimated Number of Attendees"]) || 0)),
-                  color: "#7B68AE",
-                  columns: [
-                    { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
-                    { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
-                    { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
-                    { key: "Course name and number", label: "Course", width: null },
-                    { key: "College", label: "College", width: 150 },
-                    { key: "Type of session", label: "Session Type", width: 120 },
-                  ],
-                })} />}
               {evtData && <KPICard title="Events" value={evtMonth.length} sub={evtYACurrent.length ? comparisonRange.label + ": " + evtYACurrent.length : ""} color="#5B8C5A" icon="📅"
                 onClick={() => setDrilldown({
                   title: \`Events — \${periodLabel}\`,
@@ -1301,8 +1318,45 @@ function LibraryDashboard() {
                 })} />}
             </div>
 
+            {/* KPI Cards - Row 2: Attendees */}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
+              {instrData && <KPICard title="Est. Instruction Attendees" value={totalAttendees.toLocaleString()} sub="from instruction sessions" color="#7B68AE" icon="👥"
+                onClick={() => setDrilldown({
+                  title: "Instruction Sessions (by Attendees) — " + periodLabel,
+                  rows: [...instrMonth].sort((a, b) => (parseInt(b["Estimated Number of Attendees"]) || 0) - (parseInt(a["Estimated Number of Attendees"]) || 0)),
+                  color: "#7B68AE",
+                  columns: [
+                    { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
+                    { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                    { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
+                    { key: "Course name and number", label: "Course", width: null },
+                    { key: "College", label: "College", width: 150 },
+                    { key: "Type of session", label: "Session Type", width: 120 },
+                  ],
+                })} />}
+              {evtData && <KPICard title="Event Registrations" value={evtConfirmedRegistrations.toLocaleString()}
+                sub={"Confirmed Registrations | Actual Attendance: " + evtActualAttendance.toLocaleString() + "\\nNote: Not all events require registrations"}
+                color="#5B8C5A" icon="🎟"
+                onClick={() => setDrilldown({
+                  title: "Events — " + periodLabel,
+                  rows: evtMonth, color: "#5B8C5A",
+                  columns: (() => {
+                    if (!evtMonth.length) return [];
+                    const keys = Object.keys(evtMonth[0]).filter(k => !k.startsWith("_all"));
+                    const dateCol = keys.find(k => k.toLowerCase().includes("date")) || keys[0];
+                    return [
+                      { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                      { key: "Event Organizer", label: "Organizer", width: 150 },
+                      { key: "Confirmed Registrations", label: "Registrations", width: 100 },
+                      { key: "Actual Attendance", label: "Attendance", width: 100 },
+                      { key: "Presenter", label: "Presenter", width: 150 },
+                    ];
+                  })(),
+                })} />}
+            </div>
+
             {/* Prep Time Cards */}
-            {(instrData || asyncData) && (instrPrepMinutes > 0 || consultPrepRange.max > 0) && (
+            {(instrPrepMinutes > 0 || consultPrepRange.max > 0 || evtPrepMinutes > 0) && (
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
                 {instrPrepMinutes > 0 && <KPICard title="Instruction Prep & Followup" value={(instrPrepMinutes / 60).toFixed(1) + " hrs"}
                   sub={instrPrepMinutes.toLocaleString() + " minutes"}
@@ -1338,39 +1392,57 @@ function LibraryDashboard() {
                       ],
                     });
                   }} />}
+                {evtPrepMinutes > 0 && <KPICard title="Event Prep & Followup" value={(evtPrepMinutes / 60).toFixed(1) + " hrs"}
+                  sub={evtPrepMinutes.toLocaleString() + " minutes"}
+                  color="#5B8C5A" icon="⏱"
+                  onClick={() => {
+                    const evtPrepRows = evtMonth.filter(r => parseInt(r["Event Note"] || "0", 10) > 0);
+                    setDrilldown({
+                      title: "Event Prep & Followup — " + periodLabel,
+                      rows: evtPrepRows, color: "#5B8C5A",
+                      columns: [
+                        { key: evtDateField, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+                        { key: "Event Organizer", label: "Organizer", width: 150 },
+                        { key: "Event Note", label: "Minutes", width: 80 },
+                        { key: "Presenter", label: "Presenter", width: 150 },
+                      ],
+                    });
+                  }} />}
               </div>
             )}
 
-            {/* Participant Breakdown */}
-            {(consultParticipants.length > 0 || instrParticipants.length > 0) && (
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, margin: "16px 0" }}>
-                {consultParticipants.length > 0 && (
-                  <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #3A7CA5" }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{"💬 Consultation Participants"}</div>
-                    <div style={{ display: "flex", gap: 16 }}>
-                      <ParticipantColumn data={consultParticipants} label={periodLabel} total={consultMonth.length} color="#3A7CA5" />
-                      <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
-                      <ParticipantColumn data={consultParticipantsYTD} label={currentYear + " YTD"} total={consultParticipantsYTD.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" />
-                      <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
-                      <ParticipantColumn data={consultParticipantsPrevYear} label={(currentYear - 1) + ""} total={consultParticipantsPrevYear.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" dim={consultParticipantsPrevYear.length === 0} />
-                    </div>
+            {/* Consultation Participant Breakdown */}
+            {consultParticipants.length > 0 && (
+              <div style={{ margin: "16px 0" }}>
+                <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #3A7CA5" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{"💬 Consultation Participants"}</div>
+                  <div style={{ display: "flex", gap: 16 }}>
+                    <ParticipantColumn data={consultParticipants} label={periodLabel} total={consultMonth.length} color="#3A7CA5" />
+                    <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
+                    <ParticipantColumn data={consultParticipantsYTD} label={currentYear + " YTD"} total={consultParticipantsYTD.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" />
+                    <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
+                    <ParticipantColumn data={consultParticipantsPrevYear} label={(currentYear - 1) + ""} total={consultParticipantsPrevYear.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" dim={consultParticipantsPrevYear.length === 0} />
                   </div>
-                )}
-                {instrParticipants.length > 0 && (
-                  <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #D4853F" }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>📚 Instruction Participants — {periodLabel}</div>
-                    {instrParticipants.map(({ name, count }) => (
-                      <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f5f5f5" }}>
-                        <span style={{ fontSize: 13, color: "#444" }}>{name}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: Math.max(4, (count / Math.max(...instrParticipants.map(p => p.count))) * 80), height: 8, borderRadius: 4, background: "#D4853F" }} />
-                          <span style={{ fontSize: 13, fontWeight: 700, color: "#D4853F", fontFamily: "'DM Mono', monospace", minWidth: 28, textAlign: "right" }}>{count}</span>
-                        </div>
+                </div>
+              </div>
+            )}
+
+            {/* Instruction Participant Breakdown */}
+            {instrParticipants.length > 0 && (
+              <div style={{ margin: "16px 0" }}>
+                <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #D4853F" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>{"📚 Instruction Participants — " + periodLabel}</div>
+                  {instrParticipants.map(({ name, count }) => (
+                    <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f5f5f5" }}>
+                      <span style={{ fontSize: 13, color: "#444" }}>{name}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: Math.max(4, (count / Math.max(...instrParticipants.map(p => p.count))) * 80), height: 8, borderRadius: 4, background: "#D4853F" }} />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#D4853F", fontFamily: "'DM Mono', monospace", minWidth: 28, textAlign: "right" }}>{count}</span>
                       </div>
-                    ))}
-                    <div style={{ fontSize: 11, color: "#aaa", marginTop: 8 }}>Total: {instrMonth.length} sessions</div>
-                  </div>
-                )}
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 8 }}>{"Total: " + instrMonth.length + " sessions"}</div>
+                </div>
               </div>
             )}
 
@@ -1395,6 +1467,7 @@ function LibraryDashboard() {
                         { label: "Events", cur: yearlyTotals.current.events, prev: yearlyTotals.previous.events, color: "#5B8C5A" },
                         { label: "Instruction Prep Time", isPrep: true, curMin: yearlyTotals.current.instrPrep, curMax: yearlyTotals.current.instrPrep, prevMin: yearlyTotals.previous.instrPrep, prevMax: yearlyTotals.previous.instrPrep, color: "#D4853F" },
                         { label: "Consult Prep Time", isPrep: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#3A7CA5" },
+                        { label: "Event Prep Time", isPrep: true, curMin: yearlyTotals.current.evtPrep, curMax: yearlyTotals.current.evtPrep, prevMin: yearlyTotals.previous.evtPrep, prevMax: yearlyTotals.previous.evtPrep, color: "#5B8C5A" },
                       ].map((row, i) => (
                         <tr key={i} style={{ borderBottom: "1px solid #f3f3f3" }}>
                           <td style={{ padding: "8px 10px", color: "#444", fontWeight: 500 }}>{row.label}</td>
