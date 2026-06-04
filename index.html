@@ -1466,13 +1466,13 @@ function LibraryDashboard() {
                       ],
                     });
                   }} />}
-                {consultPrepRange.max > 0 && <KPICard title="Consult Prep & Followup" value={formatPrepTime(consultPrepRange.min, consultPrepRange.max)}
+                {consultPrepRange.max > 0 && <KPICard title="Sync Consult Prep & Followup" value={formatPrepTime(consultPrepRange.min, consultPrepRange.max)}
                   sub={formatPrepTimeMins(consultPrepRange.min, consultPrepRange.max)}
                   color="#3A7CA5" icon="⏱"
                   onClick={() => {
                     const consultPrepRows = asyncMonth.filter(r => (r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
                     setDrilldown({
-                      title: "Consult Prep & Followup — " + periodLabel,
+                      title: "Sync Consult Prep & Followup — " + periodLabel,
                       rows: consultPrepRows, color: "#3A7CA5",
                       columns: [
                         { key: asyncDateCol, label: "Date", width: 90 },
@@ -1575,7 +1575,7 @@ function LibraryDashboard() {
                         { label: "Est. Attendees", cur: yearlyTotals.current.attendees, prev: yearlyTotals.previous.attendees, color: "#7B68AE" },
                         { label: "Events", cur: yearlyTotals.current.events, prev: yearlyTotals.previous.events, color: "#5B8C5A" },
                         { label: "Instruction Prep Time", isPrep: true, curMin: yearlyTotals.current.instrPrep, curMax: yearlyTotals.current.instrPrep, prevMin: yearlyTotals.previous.instrPrep, prevMax: yearlyTotals.previous.instrPrep, color: "#D4853F" },
-                        { label: "Consult Prep Time", isPrep: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#3A7CA5" },
+                        { label: "Sync Consult Prep Time", isPrep: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#3A7CA5" },
                         { label: "Event Prep Time", isPrep: true, curMin: yearlyTotals.current.evtPrep, curMax: yearlyTotals.current.evtPrep, prevMin: yearlyTotals.previous.evtPrep, prevMax: yearlyTotals.previous.evtPrep, color: "#5B8C5A" },
                         { label: "Async Consultation Time", isPrep: true, curMin: yearlyTotals.current.asyncTimeMin, curMax: yearlyTotals.current.asyncTimeMax, prevMin: yearlyTotals.previous.asyncTimeMin, prevMax: yearlyTotals.previous.asyncTimeMax, color: "#2D5A7B" },
                       ].map((row, i) => (
