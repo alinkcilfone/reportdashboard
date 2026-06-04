@@ -808,7 +808,7 @@ function LibraryDashboard() {
       ...r, _date: r[syncDateCol], _name: r[syncNameCol],
       "College or Affiliation": r._college || r["College or Affiliation"] || "",
     })));
-    if (asyncData) parts.push(...asyncData.map(r => ({
+    if (asyncData) parts.push(...asyncData.filter(r => !(r["Type of Support"] || "").toLowerCase().includes("extra consult prep")).map(r => ({
       ...r, _date: r[asyncDateCol], _name: r[asyncNameCol],
       "College or Affiliation": r._college || r["College or Affiliation"] || "",
     })));
@@ -927,6 +927,14 @@ function LibraryDashboard() {
 
   const syncPeriod = useMemo(() => consultPeriod.filter(r => r._consultType === "Synchronous"), [consultPeriod]);
   const asyncPeriod = useMemo(() => consultPeriod.filter(r => r._consultType === "Asynchronous"), [consultPeriod]);
+
+  // All async records for the period (including prep records excluded from consultData)
+  const asyncAllPeriod = useMemo(() => {
+    if (!asyncData) return [];
+    return asyncData.filter(r => dateInRange(r[asyncDateCol], periodRange)).map(r => ({
+      ...r, _date: r[asyncDateCol], _name: r[asyncNameCol],
+    }));
+  }, [asyncData, asyncDateCol, asyncNameCol, periodRange, dateInRange]);
 
   const instrPeriod = useMemo(() => filterByPeriod(instrData, "Start Date", periodRange), [instrData, periodRange, filterByPeriod]);
   const instrComparison = useMemo(() => filterByPeriod(instrData, "Start Date", comparisonRange), [instrData, comparisonRange, filterByPeriod]);
@@ -1095,7 +1103,7 @@ function LibraryDashboard() {
     };
 
     let totalMin = 0, totalMax = 0;
-    asyncMonth.forEach(r => {
+    asyncAllPeriod.forEach(r => {
       if ((r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
         const range = parseTimeRange(r["Time spent"]);
         totalMin += range.min;
@@ -1103,7 +1111,7 @@ function LibraryDashboard() {
       }
     });
     return { min: totalMin, max: totalMax };
-  }, [asyncMonth]);
+  }, [asyncAllPeriod]);
 
   // Async consultation time (excludes "Extra consult prep or followup" records)
   const asyncConsultTimeRange = useMemo(() => {
@@ -1122,7 +1130,7 @@ function LibraryDashboard() {
     };
 
     let totalMin = 0, totalMax = 0;
-    asyncMonth.forEach(r => {
+    asyncAllPeriod.forEach(r => {
       if (!(r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
         const range = parseTimeRange(r["Time spent"]);
         totalMin += range.min;
@@ -1130,7 +1138,7 @@ function LibraryDashboard() {
       }
     });
     return { min: totalMin, max: totalMax };
-  }, [asyncMonth]);
+  }, [asyncAllPeriod]);
 
   // Combined prep: instruction exact + consult range
   const totalPrepMin = instrPrepMinutes + consultPrepRange.min;
@@ -1470,7 +1478,7 @@ function LibraryDashboard() {
                   sub={formatPrepTimeMins(consultPrepRange.min, consultPrepRange.max)}
                   color="#3A7CA5" icon="⏱"
                   onClick={() => {
-                    const consultPrepRows = asyncMonth.filter(r => (r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
+                    const consultPrepRows = asyncAllPeriod.filter(r => (r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
                     setDrilldown({
                       title: "Sync Consult Prep & Followup — " + periodLabel,
                       rows: consultPrepRows, color: "#3A7CA5",
@@ -1503,7 +1511,7 @@ function LibraryDashboard() {
                   sub={formatPrepTimeMins(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
                   color="#2D5A7B" icon="⏱"
                   onClick={() => {
-                    const asyncTimeRows = asyncMonth.filter(r => !(r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
+                    const asyncTimeRows = asyncAllPeriod.filter(r => !(r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
                     setDrilldown({
                       title: "Async Consultation Time — " + periodLabel,
                       rows: asyncTimeRows, color: "#2D5A7B",
