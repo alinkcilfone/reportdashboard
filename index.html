@@ -16,49 +16,28 @@
   </style>
 </head>
 <body>
-  <div id="root">
-    <div id="loading">
-      <div class="spinner"></div>
-      <div>Loading dashboard...</div>
-    </div>
-  </div>
-
+  <div id="root"><div id="loading"><div class="spinner"></div><div>Loading dashboard...</div></div></div>
   <script>var _loadErrors = [];</script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" onerror="_loadErrors.push('React')"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
   <script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/3.2.1/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
-
   <script>
     function showError(msg) {
-      document.getElementById('root').innerHTML =
-        '<div style="padding:40px;text-align:center;color:#c55;font-family:sans-serif;max-width:600px;margin:0 auto">' +
-        '<h2 style="margin-bottom:12px">Dashboard failed to load</h2>' +
-        '<p>' + msg + '</p>' +
-        '<p style="margin-top:16px;color:#888;font-size:13px">This dashboard needs an internet connection to load its charting libraries.</p></div>';
+      document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#c55;font-family:sans-serif;max-width:600px;margin:0 auto"><h2 style="margin-bottom:12px">Dashboard failed to load</h2><p>' + msg + '</p><p style="margin-top:16px;color:#888;font-size:13px">This dashboard needs an internet connection to load its charting libraries.</p></div>';
     }
-
     function bootDashboard() {
-      if (_loadErrors.length > 0) {
-        showError('Failed to load scripts: ' + _loadErrors.join(', '));
-        return;
-      }
-
+      if (_loadErrors.length > 0) { showError('Failed to load scripts: ' + _loadErrors.join(', ')); return; }
       if (!window.React || !window.ReactDOM || !window.Recharts || !window.Babel) {
         var missing = [];
-        if (!window.React) missing.push('React');
-        if (!window.ReactDOM) missing.push('ReactDOM');
-        if (!window.Recharts) missing.push('Recharts');
-        if (!window.Babel) missing.push('Babel');
-        showError('Scripts loaded but libraries not found: ' + missing.join(', '));
-        return;
+        if (!window.React) missing.push('React'); if (!window.ReactDOM) missing.push('ReactDOM');
+        if (!window.Recharts) missing.push('Recharts'); if (!window.Babel) missing.push('Babel');
+        showError('Scripts loaded but libraries not found: ' + missing.join(', ')); return;
       }
-
       var jsxCode = `
 const { useState, useCallback, useMemo, useRef, useEffect } = React;
 const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell, LineChart, Line } = Recharts;
-
 
 // Team structure
 const TEAMS = {
@@ -280,7 +259,13 @@ function getMonthKey(dateStr) {
   if (!dateStr) return null;
   const d = dateStr.substring(0, 10);
   const parts = d.split("-");
-  if (parts.length >= 2) return \`\${parts[0]}-\${parts[1]}\`;
+  if (parts.length >= 2) {
+    const y = parts[0], m = parts[1];
+    // Validate: year must be 4 digits, month must be 1-2 digits and 01-12
+    if (/^\\d{4}$/.test(y) && /^\\d{1,2}$/.test(m) && parseInt(m, 10) >= 1 && parseInt(m, 10) <= 12) {
+      return y + "-" + m.padStart(2, "0");
+    }
+  }
   return null;
 }
 
@@ -635,6 +620,80 @@ function LibraryDashboard() {
     const keys = Object.keys(firstRow);
     // Detect if this is the new row-level appointment format (has "Status" and "With" columns)
     const isApptFormat = keys.includes("Status") && keys.includes("With");
+
+    // Detect if this is the per-user monthly summary format (first column is "Appointments Statistics")
+    if (!isApptFormat && keys.includes("Appointments Statistics")) {
+      // Parse the block-summary format into row-per-person-per-month records
+      const lines = syncRaw.split("\\n");
+      const MONTH_NAMES = { "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05", "Jun": "06",
+                            "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12" };
+      const records = [];
+      let currentPerson = null;
+      let monthHeaders = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].replace(/\\r/g, "").trim();
+        if (!line) continue;
+
+        // Detect person name line: contains "Monthly Distribution" but NOT "Per User" or "Per Location" or "Per Category"
+        if (line.includes("Monthly Distribution") && !line.includes("Per User") && !line.includes("Per Location") && !line.includes("Per Category")) {
+          const name = line.replace(/"/g, "").replace(/Monthly Distribution.*/, "").trim();
+          // Skip location and category blocks
+          if (name.includes("In-Person") || name.includes("In-person") || name.includes("Online") || name.includes("No Category")) {
+            currentPerson = null;
+            continue;
+          }
+          currentPerson = name || null;
+          continue;
+        }
+
+        if (!currentPerson) continue;
+
+        // Parse CSV values from the line
+        const vals = [];
+        let inQuote = false, val = "";
+        for (let c = 0; c < line.length; c++) {
+          if (line[c] === '"') { inQuote = !inQuote; }
+          else if (line[c] === ',' && !inQuote) { vals.push(val.trim()); val = ""; }
+          else { val += line[c]; }
+        }
+        vals.push(val.trim());
+
+        if (vals[0] === "Month/Year") {
+          monthHeaders = vals.slice(1);
+          continue;
+        }
+
+        if (vals[0] === "Confirmed Appointments" && monthHeaders.length > 0) {
+          for (let j = 1; j < vals.length && j <= monthHeaders.length; j++) {
+            const count = parseInt(vals[j], 10) || 0;
+            if (count <= 0) continue;
+            const mh = monthHeaders[j - 1]; // e.g. "Jan 2024"
+            const mParts = mh.split(" ");
+            if (mParts.length < 2 || !MONTH_NAMES[mParts[0]]) continue;
+            const dateStr = mParts[1] + "-" + MONTH_NAMES[mParts[0]] + "-15";
+            for (let n = 0; n < count; n++) {
+              records.push({
+                "Date": dateStr,
+                "With": currentPerson,
+                "Status": "Active",
+                "_name": currentPerson.toLowerCase(),
+                "_date": dateStr,
+                "_consultType": "Synchronous",
+                "_college": "",
+                "_campus": "",
+                "_studentLevel": "",
+                "_purpose": "",
+                "_showedUp": "",
+                "_location": "",
+              });
+            }
+          }
+        }
+      }
+      return records.length > 0 ? records : null;
+    }
+
     if (!isApptFormat) return syncParsed; // fallback to raw parse for other formats
 
     // Filter to Active only
@@ -1046,6 +1105,33 @@ function LibraryDashboard() {
     return { min: totalMin, max: totalMax };
   }, [asyncMonth]);
 
+  // Async consultation time (excludes "Extra consult prep or followup" records)
+  const asyncConsultTimeRange = useMemo(() => {
+    const parseTimeRange = (val) => {
+      if (!val) return { min: 0, max: 0 };
+      const v = val.toLowerCase().trim();
+      if (v.includes("0") && v.includes("29")) return { min: 0, max: 29 };
+      if (v.includes("30") && v.includes("59")) return { min: 30, max: 59 };
+      if (v.startsWith("1") && v.includes("1:59")) return { min: 60, max: 119 };
+      if (v.startsWith("2") && v.includes("2:59")) return { min: 120, max: 179 };
+      if (v.startsWith("3") && v.includes("3:59")) return { min: 180, max: 239 };
+      if (v.includes("4 hours or more")) return { min: 240, max: 300 };
+      const m = v.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);
+      if (m) return { min: parseInt(m[1], 10), max: parseInt(m[2], 10) };
+      return { min: 0, max: 0 };
+    };
+
+    let totalMin = 0, totalMax = 0;
+    asyncMonth.forEach(r => {
+      if (!(r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
+        const range = parseTimeRange(r["Time spent"]);
+        totalMin += range.min;
+        totalMax += range.max;
+      }
+    });
+    return { min: totalMin, max: totalMax };
+  }, [asyncMonth]);
+
   // Combined prep: instruction exact + consult range
   const totalPrepMin = instrPrepMinutes + consultPrepRange.min;
   const totalPrepMax = instrPrepMinutes + consultPrepRange.max;
@@ -1166,14 +1252,18 @@ function LibraryDashboard() {
       const evtPrep = evtRows.reduce((s, r) => s + (parseInt(r["Event Note"] || "0", 10) || 0), 0);
       const asyncYear = asyncData ? asyncData.filter(r => (r[asyncDateCol] || "").startsWith(yStr)) : [];
       let consultPrepMin = 0, consultPrepMax = 0;
+      let asyncTimeMin = 0, asyncTimeMax = 0;
       asyncYear.forEach(r => {
+        const range = parseTimeRange(r["Time spent"]);
         if ((r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
-          const range = parseTimeRange(r["Time spent"]);
           consultPrepMin += range.min;
           consultPrepMax += range.max;
+        } else {
+          asyncTimeMin += range.min;
+          asyncTimeMax += range.max;
         }
       });
-      return { consults, instr, attendees, events, instrPrep, evtPrep, consultPrepMin, consultPrepMax };
+      return { consults, instr, attendees, events, instrPrep, evtPrep, consultPrepMin, consultPrepMax, asyncTimeMin, asyncTimeMax };
     };
     return {
       current: calcYear(currentYear),
@@ -1357,7 +1447,7 @@ function LibraryDashboard() {
             </div>
 
             {/* Prep Time Cards */}
-            {(instrPrepMinutes > 0 || consultPrepRange.max > 0 || evtPrepMinutes > 0) && (
+            {(instrPrepMinutes > 0 || consultPrepRange.max > 0 || evtPrepMinutes > 0 || asyncConsultTimeRange.max > 0) && (
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
                 {instrPrepMinutes > 0 && <KPICard title="Instruction Prep & Followup" value={(instrPrepMinutes / 60).toFixed(1) + " hrs"}
                   sub={instrPrepMinutes.toLocaleString() + " minutes"}
@@ -1406,6 +1496,24 @@ function LibraryDashboard() {
                         { key: "Event Organizer", label: "Organizer", width: 150 },
                         { key: "Event Note", label: "Minutes", width: 80 },
                         { key: "Presenter", label: "Presenter", width: 150 },
+                      ],
+                    });
+                  }} />}
+                {asyncConsultTimeRange.max > 0 && <KPICard title="Async Consultation Time" value={formatPrepTime(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
+                  sub={formatPrepTimeMins(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
+                  color="#2D5A7B" icon="⏱"
+                  onClick={() => {
+                    const asyncTimeRows = asyncMonth.filter(r => !(r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
+                    setDrilldown({
+                      title: "Async Consultation Time — " + periodLabel,
+                      rows: asyncTimeRows, color: "#2D5A7B",
+                      columns: [
+                        { key: asyncDateCol, label: "Date", width: 90 },
+                        { key: asyncNameCol, label: "Staff", width: 140 },
+                        { key: "Time spent", label: "Time", width: 120 },
+                        { key: "Type of Support", label: "Type", width: 180 },
+                        { key: "Question", label: "Question", width: null },
+                        { key: "College or Affiliation", label: "College", width: 150 },
                       ],
                     });
                   }} />}
@@ -1469,6 +1577,7 @@ function LibraryDashboard() {
                         { label: "Instruction Prep Time", isPrep: true, curMin: yearlyTotals.current.instrPrep, curMax: yearlyTotals.current.instrPrep, prevMin: yearlyTotals.previous.instrPrep, prevMax: yearlyTotals.previous.instrPrep, color: "#D4853F" },
                         { label: "Consult Prep Time", isPrep: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#3A7CA5" },
                         { label: "Event Prep Time", isPrep: true, curMin: yearlyTotals.current.evtPrep, curMax: yearlyTotals.current.evtPrep, prevMin: yearlyTotals.previous.evtPrep, prevMax: yearlyTotals.previous.evtPrep, color: "#5B8C5A" },
+                        { label: "Async Consultation Time", isPrep: true, curMin: yearlyTotals.current.asyncTimeMin, curMax: yearlyTotals.current.asyncTimeMax, prevMin: yearlyTotals.previous.asyncTimeMin, prevMax: yearlyTotals.previous.asyncTimeMax, color: "#2D5A7B" },
                       ].map((row, i) => (
                         <tr key={i} style={{ borderBottom: "1px solid #f3f3f3" }}>
                           <td style={{ padding: "8px 10px", color: "#444", fontWeight: 500 }}>{row.label}</td>
@@ -1564,6 +1673,12 @@ function LibraryDashboard() {
               })()}
             </div>
 
+            {/* Instruction type breakdown */}
+            {instrByType.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, margin: "16px 0" }}>
+                <TypeBreakdownChart data={instrByType} title={"Instruction — Session Type (" + periodLabel + ")"} colors={PALETTE.slice(3)} />
+              </div>
+            )}
 
             {/* Person breakdowns */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, margin: "16px 0" }}>
@@ -1701,25 +1816,12 @@ function LibraryDashboard() {
   );
 }
 
-
-try {
-  const root = ReactDOM.createRoot(document.getElementById('root'));
-  root.render(React.createElement(LibraryDashboard));
-} catch(e) {
-  console.error('Render error:', e);
-  document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#c55"><h2>Render Error</h2><pre style="margin-top:12px;text-align:left;font-size:12px;max-width:600px;margin-left:auto;margin-right:auto;overflow:auto;background:#f8f8f8;padding:16px;border-radius:8px">' + e.stack + '</pre></div>';
-}
+try { const root = ReactDOM.createRoot(document.getElementById('root')); root.render(React.createElement(LibraryDashboard)); }
+catch(e) { console.error('Render error:', e); document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#c55"><h2>Render Error</h2><pre style="margin-top:12px;text-align:left;font-size:12px;max-width:600px;margin-left:auto;margin-right:auto;overflow:auto;background:#f8f8f8;padding:16px;border-radius:8px">' + e.stack + '</pre></div>'; }
 `;
-
-      try {
-        var compiled = Babel.transform(jsxCode, { presets: ['react'] }).code;
-        eval(compiled);
-      } catch(e) {
-        console.error('Compile error:', e);
-        showError('JSX compilation failed: ' + e.message);
-      }
+      try { var compiled = Babel.transform(jsxCode, { presets: ['react'] }).code; eval(compiled); }
+      catch(e) { console.error('Compile error:', e); showError('JSX compilation failed: ' + e.message); }
     }
-
     window.addEventListener('load', bootDashboard);
   </script>
 </body>
