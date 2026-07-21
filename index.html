@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Library Services Activity Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'DM Sans', 'Segoe UI', sans-serif; background: #F5F3EF; }
+    body { font-family: 'Lato', 'Segoe UI', sans-serif; background: #F5F5F5; }
     #root { min-height: 100vh; }
     #loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; color: #888; font-size: 16px; flex-direction: column; gap: 12px; }
-    #loading .spinner { width: 32px; height: 32px; border: 3px solid #ddd; border-top-color: #2D5A7B; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    #loading .spinner { width: 32px; height: 32px; border: 3px solid #ddd; border-top-color: #C8102E; border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -39,19 +39,30 @@
 const { useState, useCallback, useMemo, useRef, useEffect } = React;
 const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell, LineChart, Line } = Recharts;
 
-// Team structure
+// Team structure. STEM&E is split into STEM and Entrepreneurship (DMSB) so each
+// can be filtered separately; select both for the combined STEM&E view.
+// Former members (2018-2023) are added to the team they belonged to; staff from
+// other departments/campuses are intentionally left off (they show under All Staff).
 const TEAMS = {
-  "STEM&E": [
-    "jodi bolognese", "melissa gough", "rachel landis", "khyle hannan",
-    "lily reilly", "kathy herrlich", "katherine herrlich",
-    "alyn gamble", "philip espinola coombs", "lauri fennell", "alissa link cilfone"
+  "STEM": [
+    "jodi bolognese", "melissa gough", "rachel landis",
+    "kathy herrlich", "katherine herrlich", "alyn gamble",
+    "philip espinola coombs", "lauri fennell",
+    "alissa link cilfone", "alissa link",
+    // Former STEM / STEM&E staff
+    "sandy dunphy", "luesoni kuck", "tom hohenstein", "thomas hohenstein", "joan omoruyi"
+  ],
+  "Entrepreneurship": [
+    "khyle hannan", "lily reilly"
   ],
   "Online Learning": [
     "lindley homol", "dina meky", "anaya jones", "annette parde-maass", "annette parde-maas"
   ],
   "ASSH": [
     "karen merguerian", "roxanne palmatier", "christine oka",
-    "regina pagani", "brooke williams", "tamara uhaze"
+    "regina pagani", "brooke williams", "tamara uhaze",
+    // Former ASSH staff
+    "evie cordell", "julie jersyk"
   ],
 };
 
@@ -61,7 +72,9 @@ const ALL_RI_NAMES = Object.values(TEAMS).flat();
 // Check if a name string matches any name in a given list
 function nameMatchesList(nameStr, nameList) {
   if (!nameStr) return false;
-  const lower = nameStr.toLowerCase().trim();
+  // LibCal/LibAnswers mark departed staff as "z-inactive-First z-inactive-Last";
+  // strip that prefix so former members still match their roster name.
+  const lower = nameStr.toLowerCase().trim().replace(/z-inactive-/g, "");
   return nameList.some(tm => {
     if (lower === tm) return true;
     if (lower.includes(tm)) return true;
@@ -82,6 +95,46 @@ function nameMatchesList(nameStr, nameList) {
 // Legacy wrapper used throughout — checks against the currently active filter list
 function isTeamMember(nameStr, activeNames) {
   return nameMatchesList(nameStr, activeNames || ALL_RI_NAMES);
+}
+
+// Map an instruction file's "Library department(s)" value to a dashboard team.
+// The new instruction file (Jul 2026+) carries this field; when present it takes
+// priority over instructor-name matching. Confirmed value seen in data: "STEM".
+// Other R&I labels are matched by keyword; an unrecognized non-empty value is
+// returned as-is so it simply won't match an R&I team selection (shows under All Staff).
+function deptToTeam(value) {
+  const v = (value || "").toLowerCase().trim();
+  if (!v) return null;
+  if (v.includes("entrepreneur")) return "Entrepreneurship";
+  if (v.includes("stem")) return "STEM";
+  if (v.includes("online") || v.includes("global")) return "Online Learning";
+  if (v.includes("assh") || v.includes("social scien") || v.includes("humanities") || v.includes("arts")) return "ASSH";
+  return value.trim();
+}
+
+// Parse a LibAnswers "Time spent" bucket into a {min, max} minute range. Handles
+// both the original buckets ("0- 29 minutes", "1 - 1:59 hours", "4 hours or more")
+// and the new buckets effective Jul 1 2026 ("0-14 minutes", "2 - 2.5 hours", ...).
+function parseTimeRange(val) {
+  if (!val) return { min: 0, max: 0 };
+  const v = val.toLowerCase().trim();
+  // Legacy hour buckets expressed as "H:59" and the open-ended top bucket
+  if (v.includes("4 hours or more")) return { min: 240, max: 300 };
+  if (v.includes("1:59")) return { min: 60, max: 119 };
+  if (v.includes("2:59")) return { min: 120, max: 179 };
+  if (v.includes("3:59")) return { min: 180, max: 239 };
+  const isHours = v.includes("hour");
+  // Generic "A - B" range (supports decimals like "2.5"); scale hours to minutes
+  const m = v.match(/(\\d+(?:\\.\\d+)?)\\s*[-–]\\s*(\\d+(?:\\.\\d+)?)/);
+  if (m) {
+    let lo = parseFloat(m[1]), hi = parseFloat(m[2]);
+    if (isHours) { lo *= 60; hi *= 60; }
+    return { min: Math.round(lo), max: Math.round(hi) };
+  }
+  // Single-value fallback (e.g. a lone number)
+  const one = v.match(/(\\d+(?:\\.\\d+)?)/);
+  if (one) { let n = parseFloat(one[1]); if (isHours) n *= 60; return { min: Math.round(n), max: Math.round(n) }; }
+  return { min: 0, max: 0 };
 }
 
 // CSV parser (row-per-record format)
@@ -252,7 +305,14 @@ function isBlockSummaryFormat(text) {
   return false;
 }
 
-const PALETTE = ["#2D5A7B", "#D4853F", "#5B8C5A", "#C45B5B", "#7B68AE", "#D4A03F", "#5BA0B4", "#A05B7B", "#6B8F4E", "#B07040"];
+const PALETTE = ["#1F6FA8", "#D68A16", "#146B42", "#A6317A", "#4E8FBF", "#9A5E0E", "#8E2E68", "#17191F", "#6B6E76", "#A4804A"];
+// Editorial theme tokens (Northeastern-anchored, validated palette)
+const NU = {
+  red: "#C8102E", ink: "#17191F", muted: "#6B6E76", border: "#E1E1E1", surface: "#FFFFFF", page: "#F5F5F5",
+  consult: "#1F6FA8", instruction: "#D68A16", events: "#146B42", attendees: "#A6317A", syncPrep: "#4E8FBF",
+  // darker shades for use as small colored text (WCAG)
+  consultInk: "#1A5A88", instructionInk: "#9A5E0E", eventsInk: "#146B42", attendeesInk: "#8E2E68",
+};
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function getMonthKey(dateStr) {
@@ -316,14 +376,17 @@ function DropZone({ label, fileKey, onFile, fileName, color }) {
 
 function KPICard({ title, value, sub, color, icon, onClick }) {
   return (
-    <div onClick={onClick} style={{ background: "#fff", borderRadius: 14, padding: "22px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: \`4px solid \${color}\`, flex: 1, minWidth: 180,
-      cursor: onClick ? "pointer" : "default", transition: "box-shadow 0.2s, transform 0.15s", ...(onClick ? {} : {}) }}
-      onMouseEnter={e => { if (onClick) { e.currentTarget.style.boxShadow = "0 3px 12px rgba(0,0,0,0.12)"; e.currentTarget.style.transform = "translateY(-1px)"; } }}
-      onMouseLeave={e => { if (onClick) { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.06)"; e.currentTarget.style.transform = "none"; } }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{icon} {title}</div>
-      <div style={{ fontSize: 34, fontWeight: 700, color: color, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 4, whiteSpace: "pre-line" }}>{sub}</div>}
-      {onClick && <div style={{ fontSize: 10, color: "#bbb", marginTop: 6 }}>Click to view records</div>}
+    <div onClick={onClick} style={{ background: NU.surface, borderRadius: 4, border: "1px solid " + NU.border, flex: 1, minWidth: 170, overflow: "hidden",
+      cursor: onClick ? "pointer" : "default", transition: "border-color 0.15s" }}
+      onMouseEnter={e => { if (onClick) e.currentTarget.style.borderColor = "#C2C2C2"; }}
+      onMouseLeave={e => { if (onClick) e.currentTarget.style.borderColor = NU.border; }}>
+      <div style={{ height: 3, background: color }} />
+      <div style={{ padding: "13px 16px 15px" }}>
+        <div style={{ fontSize: 10, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em" }}>{title}</div>
+        <div style={{ fontSize: 30, fontWeight: 900, color: NU.ink, lineHeight: 1.05, marginTop: 6, letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums" }}>{value}</div>
+        {sub && <div style={{ fontSize: 12, color: NU.muted, marginTop: 3, whiteSpace: "pre-line" }}>{sub}</div>}
+        {onClick && <div style={{ fontSize: 10, color: "#B3B3B3", marginTop: 7, fontWeight: 700, letterSpacing: "0.03em" }}>Click to view →</div>}
+      </div>
     </div>
   );
 }
@@ -331,8 +394,8 @@ function KPICard({ title, value, sub, color, icon, onClick }) {
 function PersonTable({ data, label, color }) {
   if (!data || !data.length) return null;
   return (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
+    <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1" }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", marginBottom: 12, fontFamily: "'Lato', sans-serif" }}>{label}</div>
       <div style={{ maxHeight: 320, overflowY: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
@@ -345,7 +408,7 @@ function PersonTable({ data, label, color }) {
             {data.map((row, i) => (
               <tr key={i} style={{ borderBottom: "1px solid #f3f3f3" }}>
                 <td style={{ padding: "7px 6px", color: "#333" }}>{row.name}</td>
-                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: color, fontFamily: "'DM Mono', monospace" }}>{row.count}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: color, fontFamily: "'Lato', sans-serif" }}>{row.count}</td>
               </tr>
             ))}
           </tbody>
@@ -355,48 +418,91 @@ function PersonTable({ data, label, color }) {
   );
 }
 
-function TypeBreakdownChart({ data, title, colors }) {
+// Horizontal category bars — the right tool for a multi-category breakdown
+// (angles in a pie are hard to compare once there are more than a few slices).
+function CategoryBars({ data, title, color }) {
   if (!data || !data.length) return null;
+  const total = data.reduce((s, d) => s + (d.value || 0), 0);
+  const max = Math.max(...data.map(d => d.value || 0), 1);
+  const sorted = [...data].sort((a, b) => (b.value || 0) - (a.value || 0));
   return (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>{title}</div>
-      <ResponsiveContainer width="100%" height={240}>
-        <PieChart>
-          <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} innerRadius={45} paddingAngle={2} label={({ name, percent }) => percent > 0.05 ? \`\${name.substring(0, 18)}\${name.length > 18 ? "…" : ""} (\${(percent * 100).toFixed(0)}%)\` : ""} style={{ fontSize: 11 }}>
-            {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
-          </Pie>
-          <Tooltip />
-        </PieChart>
-      </ResponsiveContainer>
+    <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1" }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", marginBottom: 12, fontFamily: "'Lato', sans-serif" }}>{title}</div>
+      {sorted.map(({ name, value }) => (
+        <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0" }}>
+          <span style={{ fontSize: 12, color: "#444", width: 150, flexShrink: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={name}>{name}</span>
+          <div style={{ flex: 1, background: "#f2f2f2", borderRadius: 4, height: 14 }}>
+            <div style={{ width: (value / max * 100) + "%", height: "100%", borderRadius: 4, background: color, minWidth: 2 }} />
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 700, color, fontFamily: "'Lato', sans-serif", width: 68, textAlign: "right", flexShrink: 0 }}>
+            {value.toLocaleString()} ({total ? Math.round(value / total * 100) : 0}%)
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Single 100% stacked bar for a 2–3 way split — compact and precise vs a pie.
+function StackedShare({ data, title, colors }) {
+  if (!data || !data.length) return null;
+  const total = data.reduce((s, d) => s + (d.value || 0), 0) || 1;
+  return (
+    <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1" }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", marginBottom: 14, fontFamily: "'Lato', sans-serif" }}>{title}</div>
+      <div style={{ display: "flex", height: 22, borderRadius: 6, overflow: "hidden" }}>
+        {data.map((d, i) => (
+          <div key={d.name} style={{ width: (d.value / total * 100) + "%", background: colors[i % colors.length] }} title={d.name + ": " + d.value} />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
+        {data.map((d, i) => (
+          <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#555" }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: colors[i % colors.length], display: "inline-block" }} />
+            <span>{d.name}</span>
+            <span style={{ fontWeight: 700, color: colors[i % colors.length], fontFamily: "'Lato', sans-serif" }}>{d.value.toLocaleString()} ({Math.round(d.value / total * 100)}%)</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function TrendChart({ referenceData, instructionData, eventsData, allMonths }) {
+  const hasEventsData = eventsData && eventsData.length;
   const chartData = allMonths.map(mk => {
     const refCount = (referenceData || []).filter(r => getMonthKey(r["_date"] || r["Date"]) === mk).length;
     const instrCount = (instructionData || []).filter(r => getMonthKey(r["Start Date"]) === mk).length;
-    let evtCount = 0;
-    if (eventsData && eventsData.length) {
-      evtCount = eventsData.filter(r => getMonthKey(r["Date"] || r["Start Date"] || r["Event Date"]) === mk).length;
-    }
-    return { month: formatMonthKey(mk), Consultations: refCount, Instruction: instrCount, Events: evtCount || undefined };
+    const evtCount = hasEventsData ? eventsData.filter(r => getMonthKey(r["Date"] || r["Start Date"] || r["Event Date"]) === mk).length : null;
+    return { month: formatMonthKey(mk), Consultations: refCount, Instruction: instrCount, Events: evtCount };
   });
+  const trendPanels = [
+    { key: "Consultations", color: "#1F6FA8" },
+    { key: "Instruction", color: "#D68A16" },
+    ...(hasEventsData ? [{ key: "Events", color: "#146B42" }] : []),
+  ];
   return (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>Monthly Trend</div>
-      <ResponsiveContainer width="100%" height={260}>
-        <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-          <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip />
-          <Legend />
-          <Line type="monotone" dataKey="Consultations" stroke="#2D5A7B" strokeWidth={2.5} dot={{ r: 4 }} />
-          <Line type="monotone" dataKey="Instruction" stroke="#D4853F" strokeWidth={2.5} dot={{ r: 4 }} />
-          {chartData.some(d => d.Events) && <Line type="monotone" dataKey="Events" stroke="#5B8C5A" strokeWidth={2.5} dot={{ r: 4 }} />}
-        </LineChart>
-      </ResponsiveContainer>
+    <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", fontFamily: "'Lato', sans-serif" }}>Monthly Trend</div>
+        <div style={{ fontSize: 11, color: "#aaa" }}>Each metric on its own scale</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
+        {trendPanels.map(p => (
+          <div key={p.key}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.color, marginBottom: 4 }}>{p.key}</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={chartData} margin={{ top: 5, right: 12, left: -12, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey={p.key} stroke={p.color} strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -408,8 +514,8 @@ function ComparisonBar({ currentData, yearAgoData, currentLabel, yearAgoLabel, l
   ].filter(Boolean);
   if (data.length < 2) return null;
   return (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", flex: 1, minWidth: 260 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>{label} — Year over Year</div>
+    <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1", flex: 1, minWidth: 260 }}>
+      <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", marginBottom: 12, fontFamily: "'Lato', sans-serif" }}>{label} — Year over Year</div>
       <ResponsiveContainer width="100%" height={180}>
         <BarChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -457,13 +563,13 @@ function DetailList({ title, color, rows, columns }) {
   };
 
   return (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", margin: "16px 0" }}>
+    <div style={{ background: "#fff", borderRadius: 4, padding: "20px", border: "1px solid #E1E1E1", margin: "16px 0" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif", borderLeft: \`4px solid \${color}\`, paddingLeft: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", fontFamily: "'Lato', sans-serif", borderLeft: \`4px solid \${color}\`, paddingLeft: 10 }}>
           {title} <span style={{ fontWeight: 400, color: "#999", fontSize: 12 }}>({filtered.length} records)</span>
         </div>
         <input type="text" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)}
-          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 12, width: 180, fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 12, width: 180, fontFamily: "'Lato', sans-serif", outline: "none" }} />
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -499,7 +605,7 @@ function DetailList({ title, color, rows, columns }) {
         <div style={{ textAlign: "center", marginTop: 12 }}>
           <button onClick={() => setExpanded(!expanded)}
             style={{ padding: "6px 20px", borderRadius: 8, border: \`1px solid \${color}40\`, background: \`\${color}08\`, color: color,
-              fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+              fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Lato', sans-serif" }}>
             {expanded ? "Show less" : \`Show all \${filtered.length} records\`}
           </button>
         </div>
@@ -518,7 +624,7 @@ function ParticipantColumn({ data, label, total, color, dim }) {
           <span style={{ fontSize: 12, color: "#444", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "55%" }}>{name}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{ width: Math.max(3, (count / maxCount) * 50), height: 7, borderRadius: 4, background: color }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: color, fontFamily: "'DM Mono', monospace", minWidth: 30, textAlign: "right" }}>{count}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: color, fontFamily: "'Lato', sans-serif", minWidth: 30, textAlign: "right" }}>{count}</span>
           </div>
         </div>
       ))}
@@ -532,10 +638,10 @@ function DrilldownModal({ title, rows, columns, color, onClose }) {
   if (!rows || !rows.length) return null;
   return (
     <div onClick={onClose} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 900, width: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 4, maxWidth: 900, width: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
         <div style={{ padding: "18px 22px", borderBottom: \`3px solid \${color}\`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif" }}>{title}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#333", fontFamily: "'Lato', sans-serif" }}>{title}</div>
             <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{rows.length} records</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#999", padding: "4px 8px", lineHeight: 1 }}>×</button>
@@ -571,17 +677,22 @@ function DrilldownModal({ title, rows, columns, color, onClose }) {
 
 function LibraryDashboard() {
   const [syncRaw, setSyncRaw] = useState(null);
-  const [asyncRaw, setAsyncRaw] = useState(null);
-  const [instrRaw, setInstrRaw] = useState(null);
+  const [asyncOldRaw, setAsyncOldRaw] = useState(null);
+  const [asyncNewRaw, setAsyncNewRaw] = useState(null);
+  const [instrOldRaw, setInstrOldRaw] = useState(null);
+  const [instrNewRaw, setInstrNewRaw] = useState(null);
   const [evtRaw, setEvtRaw] = useState(null);
   const [syncName, setSyncName] = useState("");
-  const [asyncName, setAsyncName] = useState("");
-  const [instrName, setInstrName] = useState("");
+  const [asyncOldName, setAsyncOldName] = useState("");
+  const [asyncNewName, setAsyncNewName] = useState("");
+  const [instrOldName, setInstrOldName] = useState("");
+  const [instrNewName, setInstrNewName] = useState("");
   const [evtName, setEvtName] = useState("");
   const [viewType, setViewType] = useState("month"); // "month" | "calendar" | "review"
   const [viewPeriod, setViewPeriod] = useState(null); // e.g. "2026-04" for month, "2026" for year
-  const [selectedTeams, setSelectedTeams] = useState(["STEM&E"]); // default to user's team
+  const [selectedTeams, setSelectedTeams] = useState(["STEM", "Entrepreneurship"]); // default = combined STEM&E
   const [drilldown, setDrilldown] = useState(null); // { title, rows, columns, color }
+  const [activeTab, setActiveTab] = useState("dashboard"); // "dashboard" | "details"
 
   // Compute active name filter list based on selected teams
   const activeFilterNames = useMemo(() => {
@@ -746,8 +857,35 @@ function LibraryDashboard() {
     });
   }, [syncParsed]);
 
-  const asyncDataAll = useMemo(() => asyncRaw ? parseCSV(asyncRaw) : null, [asyncRaw]);
-  const instrDataAll = useMemo(() => instrRaw ? parseCSV(instrRaw) : null, [instrRaw]);
+  // Async consults: old (through Jun 30 2026) + new (Jul 1 2026+) share a column
+  // structure, so parse each and concatenate. Date filtering handles scoping.
+  const asyncDataAll = useMemo(() => {
+    const parts = [
+      ...(asyncOldRaw ? parseCSV(asyncOldRaw) : []),
+      ...(asyncNewRaw ? parseCSV(asyncNewRaw) : []),
+    ];
+    return parts.length ? parts : null;
+  }, [asyncOldRaw, asyncNewRaw]);
+
+  // Instruction sessions: old + new merged. The new file (Jul 2026+) renames some
+  // columns and adds "Library department(s)"; normalize new rows onto the canonical
+  // keys the rest of the dashboard reads so both files feed one pipeline.
+  const instrDataAll = useMemo(() => {
+    const parts = [
+      ...(instrOldRaw ? parseCSV(instrOldRaw) : []),
+      ...(instrNewRaw ? parseCSV(instrNewRaw) : []),
+    ];
+    if (!parts.length) return null;
+    const ATT = "Estimated Number of Attendees";
+    const PREP = "Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)";
+    return parts.map(r => ({
+      ...r,
+      "Type of session": r["Type of session"] || r["Session type"] || "",
+      [ATT]: r[ATT] || r["Estimated number of attendees"] || "",
+      [PREP]: r[PREP] || r["Minutes on prep and follow-up"] || "",
+      "Library department(s)": r["Library department(s)"] || "",
+    }));
+  }, [instrOldRaw, instrNewRaw]);
   const evtDataRaw = useMemo(() => evtRaw ? parseCSV(evtRaw) : null, [evtRaw]);
 
   // Detect the name/date columns for each consultation file (they may differ)
@@ -817,9 +955,17 @@ function LibraryDashboard() {
 
   const instrData = useMemo(() => {
     if (!instrDataAll) return null;
-    if (!activeFilterNames) return instrDataAll;
-    return instrDataAll.filter(r => isTeamMember(r["Library instructor(s)"], activeFilterNames));
-  }, [instrDataAll, activeFilterNames]);
+    if (!activeFilterNames) return instrDataAll; // "All Staff" — no filter
+    return instrDataAll.filter(r => {
+      // Team field takes priority when present (new file); else fall back to
+      // instructor-name matching (old file has no "Library department(s)").
+      const dept = (r["Library department(s)"] || "").trim();
+      if (dept) {
+        return dept.split(";").map(deptToTeam).some(t => selectedTeams.includes(t));
+      }
+      return isTeamMember(r["Library instructor(s)"], activeFilterNames);
+    });
+  }, [instrDataAll, activeFilterNames, selectedTeams]);
 
   // evtData — filter will use the auto-detected name field; we filter it later after detection
 
@@ -938,6 +1084,7 @@ function LibraryDashboard() {
 
   const instrPeriod = useMemo(() => filterByPeriod(instrData, "Start Date", periodRange), [instrData, periodRange, filterByPeriod]);
   const instrComparison = useMemo(() => filterByPeriod(instrData, "Start Date", comparisonRange), [instrData, comparisonRange, filterByPeriod]);
+
 
   // Detect events date field
   const evtDateField = useMemo(() => {
@@ -1087,21 +1234,6 @@ function LibraryDashboard() {
   // Consult prep time (range-based from "Time spent" column where Type of Support = "Extra consult prep or followup")
   // Returns { min, max } in minutes
   const consultPrepRange = useMemo(() => {
-    const parseTimeRange = (val) => {
-      if (!val) return { min: 0, max: 0 };
-      const v = val.toLowerCase().trim();
-      if (v.includes("0") && v.includes("29")) return { min: 0, max: 29 };
-      if (v.includes("30") && v.includes("59")) return { min: 30, max: 59 };
-      if (v.startsWith("1") && v.includes("1:59")) return { min: 60, max: 119 };
-      if (v.startsWith("2") && v.includes("2:59")) return { min: 120, max: 179 };
-      if (v.startsWith("3") && v.includes("3:59")) return { min: 180, max: 239 };
-      if (v.includes("4 hours or more")) return { min: 240, max: 300 };
-      // Try to parse as generic "X - Y" pattern
-      const m = v.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);
-      if (m) return { min: parseInt(m[1], 10), max: parseInt(m[2], 10) };
-      return { min: 0, max: 0 };
-    };
-
     let totalMin = 0, totalMax = 0;
     asyncAllPeriod.forEach(r => {
       if ((r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
@@ -1115,20 +1247,6 @@ function LibraryDashboard() {
 
   // Async consultation time (excludes "Extra consult prep or followup" records)
   const asyncConsultTimeRange = useMemo(() => {
-    const parseTimeRange = (val) => {
-      if (!val) return { min: 0, max: 0 };
-      const v = val.toLowerCase().trim();
-      if (v.includes("0") && v.includes("29")) return { min: 0, max: 29 };
-      if (v.includes("30") && v.includes("59")) return { min: 30, max: 59 };
-      if (v.startsWith("1") && v.includes("1:59")) return { min: 60, max: 119 };
-      if (v.startsWith("2") && v.includes("2:59")) return { min: 120, max: 179 };
-      if (v.startsWith("3") && v.includes("3:59")) return { min: 180, max: 239 };
-      if (v.includes("4 hours or more")) return { min: 240, max: 300 };
-      const m = v.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);
-      if (m) return { min: parseInt(m[1], 10), max: parseInt(m[2], 10) };
-      return { min: 0, max: 0 };
-    };
-
     let totalMin = 0, totalMax = 0;
     asyncAllPeriod.forEach(r => {
       if (!(r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
@@ -1155,6 +1273,10 @@ function LibraryDashboard() {
     if (minVal === maxVal) return fmtMins(minVal) + " minutes";
     return fmtMins(minVal) + "–" + fmtMins(maxVal) + " minutes";
   };
+
+  // Point estimate for bucketed time: midpoint of the summed range (= sum of bucket
+  // midpoints). More communicable than a wide min–max band for advocacy.
+  const formatEstHours = (minVal, maxVal) => "~" + Math.round((minVal + maxVal) / 2 / 60).toLocaleString() + " hrs";
 
   // Participant breakdown — normalize levels into common categories
   const normalizeLevel = (val) => {
@@ -1216,7 +1338,10 @@ function LibraryDashboard() {
       const level = normalizeLevel(primary);
       counts[level] = (counts[level] || 0) + 1;
     });
-    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+    // Sort by natural academic level rather than by frequency, so the breakdown reads intuitively.
+    const LEVEL_ORDER = ["Undergraduate", "Graduate", "Postgraduate", "Faculty", "Staff", "Alumni", "Community", "Apprentice", "Other", "Unknown"];
+    const rank = (n) => { const i = LEVEL_ORDER.indexOf(n); return i === -1 ? LEVEL_ORDER.length : i; };
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => rank(a.name) - rank(b.name));
   }, [instrMonth]);
 
   // Yearly totals
@@ -1229,20 +1354,6 @@ function LibraryDashboard() {
       return d.startsWith(yStr);
     });
   }, []);
-
-  const parseTimeRange = (val) => {
-    if (!val) return { min: 0, max: 0 };
-    const v = val.toLowerCase().trim();
-    if (v.includes("0") && v.includes("29")) return { min: 0, max: 29 };
-    if (v.includes("30") && v.includes("59")) return { min: 30, max: 59 };
-    if (v.startsWith("1") && v.includes("1:59")) return { min: 60, max: 119 };
-    if (v.startsWith("2") && v.includes("2:59")) return { min: 120, max: 179 };
-    if (v.startsWith("3") && v.includes("3:59")) return { min: 180, max: 239 };
-    if (v.includes("4 hours or more")) return { min: 240, max: 300 };
-    const m = v.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);
-    if (m) return { min: parseInt(m[1], 10), max: parseInt(m[2], 10) };
-    return { min: 0, max: 0 };
-  };
 
   const yearlyTotals = useMemo(() => {
     const calcYear = (year) => {
@@ -1283,36 +1394,42 @@ function LibraryDashboard() {
 
   const handleFile = useCallback((key, text, name) => {
     if (key === "sync") { setSyncRaw(text); setSyncName(name); }
-    else if (key === "async") { setAsyncRaw(text); setAsyncName(name); }
-    else if (key === "instruction") { setInstrRaw(text); setInstrName(name); }
+    else if (key === "asyncOld") { setAsyncOldRaw(text); setAsyncOldName(name); }
+    else if (key === "asyncNew") { setAsyncNewRaw(text); setAsyncNewName(name); }
+    else if (key === "instrOld") { setInstrOldRaw(text); setInstrOldName(name); }
+    else if (key === "instrNew") { setInstrNewRaw(text); setInstrNewName(name); }
     else if (key === "events") { setEvtRaw(text); setEvtName(name); }
   }, []);
 
   const hasData = consultData || instrData || evtData;
 
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#F5F3EF", minHeight: "100vh", padding: "0 0 40px 0" }}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <div style={{ fontFamily: "'Lato', 'Segoe UI', sans-serif", background: NU.page, minHeight: "100vh", padding: "0 0 40px 0" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet" />
 
-      {/* Header */}
-      <div style={{ background: "linear-gradient(135deg, #1B3A4B 0%, #2D5A7B 60%, #3A7CA5 100%)", padding: "32px 28px 28px", color: "#fff" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7, marginBottom: 6 }}>Library Services</div>
-        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Activity Dashboard</div>
-        <div style={{ fontSize: 13, opacity: 0.65, marginTop: 6 }}>Research & Instruction Group</div>
+      {/* Masthead */}
+      <div style={{ height: 3, background: NU.red }} />
+      <div style={{ background: NU.ink, padding: "16px 28px" }}>
+        <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+          <div style={{ fontSize: 20, fontWeight: 900, color: "#fff", letterSpacing: "-0.015em" }}>Northeastern University Library</div>
+          <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em", textTransform: "uppercase", color: "#E8927C", marginTop: 2 }}>Research &amp; Instruction · Activity Dashboard</div>
+        </div>
       </div>
 
       <div style={{ padding: "0 20px", maxWidth: 1000, margin: "0 auto" }}>
 
         {/* Upload Area */}
-        <div style={{ margin: "20px 0", background: "#fff", borderRadius: 16, padding: "20px 18px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+        <div style={{ margin: "20px 0", background: "#fff", borderRadius: 4, padding: "20px 18px", border: "1px solid #E1E1E1" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.04em" }}>
             Load Data Files
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <DropZone label="Consults (Sync)" fileKey="sync" onFile={handleFile} fileName={syncName} color="#2D5A7B" />
-            <DropZone label="Consults (Async)" fileKey="async" onFile={handleFile} fileName={asyncName} color="#3A7CA5" />
-            <DropZone label="Instruction Sessions" fileKey="instruction" onFile={handleFile} fileName={instrName} color="#D4853F" />
-            <DropZone label="Events" fileKey="events" onFile={handleFile} fileName={evtName} color="#5B8C5A" />
+            <DropZone label="Consults (Sync)" fileKey="sync" onFile={handleFile} fileName={syncName} color="#1F6FA8" />
+            <DropZone label="Consults (Async) — through Jun 30 2026" fileKey="asyncOld" onFile={handleFile} fileName={asyncOldName} color="#4E8FBF" />
+            <DropZone label="Consults (Async) — Jul 1 2026+" fileKey="asyncNew" onFile={handleFile} fileName={asyncNewName} color="#4E8FBF" />
+            <DropZone label="Instruction — through Jun 30 2026" fileKey="instrOld" onFile={handleFile} fileName={instrOldName} color="#D68A16" />
+            <DropZone label="Instruction — Jul 1 2026+" fileKey="instrNew" onFile={handleFile} fileName={instrNewName} color="#D68A16" />
+            <DropZone label="Events" fileKey="events" onFile={handleFile} fileName={evtName} color="#146B42" />
           </div>
           {evtData && evtData.length > 0 && evtData[0][evtNameField] === undefined && (
             <div style={{ marginTop: 10, padding: "10px 14px", background: "#FFF8E1", borderRadius: 8, fontSize: 12, color: "#8B6914" }}>
@@ -1331,28 +1448,40 @@ function LibraryDashboard() {
 
         {hasData && (
           <>
-            {/* View Selector + Team Toggle */}
+            {/* Tab navigation — below the upload area */}
+            <div style={{ display: "flex", gap: 24, margin: "18px 0 0", borderBottom: "1px solid " + NU.border }}>
+              {[["dashboard", "Dashboard"], ["details", "Details"]].map(([id, label]) => (
+                <button key={id} onClick={() => setActiveTab(id)}
+                  style={{ padding: "10px 2px", fontSize: 12, fontWeight: 900, letterSpacing: "0.05em", textTransform: "uppercase", cursor: "pointer", border: "none", background: "transparent",
+                    color: activeTab === id ? NU.ink : "#9a9a9a", boxShadow: activeTab === id ? "inset 0 -3px 0 " + NU.red : "none", marginBottom: -1 }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Shared controls — apply to both Dashboard and Details tabs */}
+            {(activeTab === "dashboard" || activeTab === "details") && (
             <div style={{ margin: "16px 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <label style={{ fontSize: 13, fontWeight: 600, color: "#555" }}>View:</label>
               <select value={viewType} onChange={e => { setViewType(e.target.value); setViewPeriod(null); }}
-                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, color: "#2D5A7B", background: "#fff", cursor: "pointer" }}>
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13, fontFamily: "'Lato', sans-serif", fontWeight: 600, color: "#1F6FA8", background: "#fff", cursor: "pointer" }}>
                 <option value="month">Month</option>
                 <option value="calendar">Calendar Year</option>
                 <option value="review">Review Year</option>
               </select>
               <select value={viewPeriod || ""} onChange={e => setViewPeriod(e.target.value)}
-                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, color: "#2D5A7B", background: "#fff", cursor: "pointer" }}>
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13, fontFamily: "'Lato', sans-serif", fontWeight: 600, color: "#1F6FA8", background: "#fff", cursor: "pointer" }}>
                 {periodOptions.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
               </select>
 
               <div style={{ display: "flex", alignItems: "center", gap: 0, borderRadius: 8, overflow: "hidden", border: "1px solid #ddd", marginLeft: 4 }}>
-                {["STEM&E", "Online Learning", "ASSH", "All Staff"].map((team, idx) => {
+                {["STEM", "Entrepreneurship", "Online Learning", "ASSH", "All Staff"].map((team, idx) => {
                   const isActive = selectedTeams.includes(team);
                   return (
                     <button key={team} onClick={() => toggleTeam(team)}
-                      style={{ padding: "7px 12px", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", cursor: "pointer", border: "none",
+                      style={{ padding: "7px 12px", fontSize: 12, fontWeight: 600, fontFamily: "'Lato', sans-serif", cursor: "pointer", border: "none",
                         borderLeft: idx > 0 ? "1px solid #ddd" : "none",
-                        background: isActive ? "#2D5A7B" : "#fff", color: isActive ? "#fff" : "#777", transition: "all 0.2s", whiteSpace: "nowrap" }}>
+                        background: isActive ? "#1F6FA8" : "#fff", color: isActive ? "#fff" : "#777", transition: "all 0.2s", whiteSpace: "nowrap" }}>
                       {team}
                     </button>
                   );
@@ -1365,15 +1494,18 @@ function LibraryDashboard() {
                 </span>
               )}
             </div>
+            )}
 
+            {activeTab === "dashboard" && (
+            <>
             {/* KPI Cards - Row 1: Counts */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
               {consultData && <KPICard title="Consultations" value={consultMonth.length}
                 sub={syncMonth.length + " sync · " + asyncMonth.length + " async" + (consultYACurrent.length ? " | " + comparisonRange.label + ": " + consultYACurrent.length : "")}
-                color="#2D5A7B" icon="💬"
+                color="#1F6FA8" icon="💬"
                 onClick={() => setDrilldown({
                   title: \`All Consultations — \${periodLabel}\`,
-                  rows: consultMonth, color: "#2D5A7B",
+                  rows: consultMonth, color: "#1F6FA8",
                   columns: [
                     { key: "_date", label: "Date", width: 90, render: v => v ? v.substring(0, 10) : "—" },
                     { key: "_name", label: "Staff", width: 130 },
@@ -1384,10 +1516,10 @@ function LibraryDashboard() {
                     { key: "_purpose", label: "Purpose", width: null, render: v => v || "—" },
                   ],
                 })} />}
-              {instrData && <KPICard title="Instruction Sessions" value={instrMonth.length} sub={instrYACurrent.length ? comparisonRange.label + ": " + instrYACurrent.length : ""} color="#D4853F" icon="📚"
+              {instrData && <KPICard title="Instruction Sessions" value={instrMonth.length} sub={instrYACurrent.length ? comparisonRange.label + ": " + instrYACurrent.length : ""} color="#D68A16" icon="📚"
                 onClick={() => setDrilldown({
                   title: \`Instruction Sessions — \${periodLabel}\`,
-                  rows: instrMonth, color: "#D4853F",
+                  rows: instrMonth, color: "#D68A16",
                   columns: [
                     { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
                     { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
@@ -1398,10 +1530,10 @@ function LibraryDashboard() {
                     { key: "Campus", label: "Campus", width: 90 },
                   ],
                 })} />}
-              {evtData && <KPICard title="Events" value={evtMonth.length} sub={evtYACurrent.length ? comparisonRange.label + ": " + evtYACurrent.length : ""} color="#5B8C5A" icon="📅"
+              {evtData && <KPICard title="Events" value={evtMonth.length} sub={evtYACurrent.length ? comparisonRange.label + ": " + evtYACurrent.length : ""} color="#146B42" icon="📅"
                 onClick={() => setDrilldown({
                   title: \`Events — \${periodLabel}\`,
-                  rows: evtMonth, color: "#5B8C5A",
+                  rows: evtMonth, color: "#146B42",
                   columns: (() => {
                     if (!evtMonth.length) return [];
                     const keys = Object.keys(evtMonth[0]).filter(k => !k.startsWith("_all"));
@@ -1418,11 +1550,11 @@ function LibraryDashboard() {
 
             {/* KPI Cards - Row 2: Attendees */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
-              {instrData && <KPICard title="Est. Instruction Attendees" value={totalAttendees.toLocaleString()} sub="from instruction sessions" color="#7B68AE" icon="👥"
+              {instrData && <KPICard title="Est. Instruction Attendees" value={totalAttendees.toLocaleString()} sub="from instruction sessions" color="#A6317A" icon="👥"
                 onClick={() => setDrilldown({
                   title: "Instruction Sessions (by Attendees) — " + periodLabel,
                   rows: [...instrMonth].sort((a, b) => (parseInt(b["Estimated Number of Attendees"]) || 0) - (parseInt(a["Estimated Number of Attendees"]) || 0)),
-                  color: "#7B68AE",
+                  color: "#A6317A",
                   columns: [
                     { key: "Estimated Number of Attendees", label: "Attendees", width: 80 },
                     { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
@@ -1434,10 +1566,10 @@ function LibraryDashboard() {
                 })} />}
               {evtData && <KPICard title="Event Registrations" value={evtConfirmedRegistrations.toLocaleString()}
                 sub={"Confirmed Registrations | Actual Attendance: " + evtActualAttendance.toLocaleString() + "\\nNote: Not all events require registrations"}
-                color="#5B8C5A" icon="🎟"
+                color="#146B42" icon="🎟"
                 onClick={() => setDrilldown({
                   title: "Events — " + periodLabel,
-                  rows: evtMonth, color: "#5B8C5A",
+                  rows: evtMonth, color: "#146B42",
                   columns: (() => {
                     if (!evtMonth.length) return [];
                     const keys = Object.keys(evtMonth[0]).filter(k => !k.startsWith("_all"));
@@ -1459,12 +1591,12 @@ function LibraryDashboard() {
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
                 {instrPrepMinutes > 0 && <KPICard title="Instruction Prep & Followup" value={(instrPrepMinutes / 60).toFixed(1) + " hrs"}
                   sub={instrPrepMinutes.toLocaleString() + " minutes"}
-                  color="#D4853F" icon="⏱"
+                  color="#D68A16" icon="⏱"
                   onClick={() => {
                     const instrPrepRows = instrMonth.filter(r => parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) > 0);
                     setDrilldown({
                       title: "Instruction Prep & Followup — " + periodLabel,
-                      rows: instrPrepRows, color: "#D4853F",
+                      rows: instrPrepRows, color: "#D68A16",
                       columns: [
                         { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
                         { key: "Library instructor(s)", label: "Instructor", width: 160 },
@@ -1474,14 +1606,14 @@ function LibraryDashboard() {
                       ],
                     });
                   }} />}
-                {consultPrepRange.max > 0 && <KPICard title="Sync Consult Prep & Followup" value={formatPrepTime(consultPrepRange.min, consultPrepRange.max)}
-                  sub={formatPrepTimeMins(consultPrepRange.min, consultPrepRange.max)}
-                  color="#3A7CA5" icon="⏱"
+                {consultPrepRange.max > 0 && <KPICard title="Sync Consult Prep & Followup" value={formatEstHours(consultPrepRange.min, consultPrepRange.max)}
+                  sub={"range " + formatPrepTime(consultPrepRange.min, consultPrepRange.max)}
+                  color="#4E8FBF" icon="⏱"
                   onClick={() => {
                     const consultPrepRows = asyncAllPeriod.filter(r => (r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
                     setDrilldown({
                       title: "Sync Consult Prep & Followup — " + periodLabel,
-                      rows: consultPrepRows, color: "#3A7CA5",
+                      rows: consultPrepRows, color: "#4E8FBF",
                       columns: [
                         { key: asyncDateCol, label: "Date", width: 90 },
                         { key: asyncNameCol, label: "Staff", width: 140 },
@@ -1493,12 +1625,12 @@ function LibraryDashboard() {
                   }} />}
                 {evtPrepMinutes > 0 && <KPICard title="Event Prep & Followup" value={(evtPrepMinutes / 60).toFixed(1) + " hrs"}
                   sub={evtPrepMinutes.toLocaleString() + " minutes"}
-                  color="#5B8C5A" icon="⏱"
+                  color="#146B42" icon="⏱"
                   onClick={() => {
                     const evtPrepRows = evtMonth.filter(r => parseInt(r["Event Note"] || "0", 10) > 0);
                     setDrilldown({
                       title: "Event Prep & Followup — " + periodLabel,
-                      rows: evtPrepRows, color: "#5B8C5A",
+                      rows: evtPrepRows, color: "#146B42",
                       columns: [
                         { key: evtDateField, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
                         { key: "Event Organizer", label: "Organizer", width: 150 },
@@ -1507,14 +1639,14 @@ function LibraryDashboard() {
                       ],
                     });
                   }} />}
-                {asyncConsultTimeRange.max > 0 && <KPICard title="Async Consultation Time" value={formatPrepTime(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
-                  sub={formatPrepTimeMins(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
-                  color="#2D5A7B" icon="⏱"
+                {asyncConsultTimeRange.max > 0 && <KPICard title="Async Consultation Time" value={formatEstHours(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
+                  sub={"range " + formatPrepTime(asyncConsultTimeRange.min, asyncConsultTimeRange.max)}
+                  color="#1F6FA8" icon="⏱"
                   onClick={() => {
                     const asyncTimeRows = asyncAllPeriod.filter(r => !(r["Type of Support"] || "").toLowerCase().includes("extra consult prep"));
                     setDrilldown({
                       title: "Async Consultation Time — " + periodLabel,
-                      rows: asyncTimeRows, color: "#2D5A7B",
+                      rows: asyncTimeRows, color: "#1F6FA8",
                       columns: [
                         { key: asyncDateCol, label: "Date", width: 90 },
                         { key: asyncNameCol, label: "Staff", width: 140 },
@@ -1531,14 +1663,14 @@ function LibraryDashboard() {
             {/* Consultation Participant Breakdown */}
             {consultParticipants.length > 0 && (
               <div style={{ margin: "16px 0" }}>
-                <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #3A7CA5" }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{"💬 Consultation Participants"}</div>
+                <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1", borderLeft: "4px solid #4E8FBF" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{"Consultation Participants"}</div>
                   <div style={{ display: "flex", gap: 16 }}>
-                    <ParticipantColumn data={consultParticipants} label={periodLabel} total={consultMonth.length} color="#3A7CA5" />
+                    <ParticipantColumn data={consultParticipants} label={periodLabel} total={consultMonth.length} color="#4E8FBF" />
                     <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
-                    <ParticipantColumn data={consultParticipantsYTD} label={currentYear + " YTD"} total={consultParticipantsYTD.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" />
+                    <ParticipantColumn data={consultParticipantsYTD} label={currentYear + " YTD"} total={consultParticipantsYTD.reduce((s, p) => s + p.count, 0)} color="#4E8FBF" />
                     <div style={{ width: 1, background: "#e8e8e8", flexShrink: 0 }} />
-                    <ParticipantColumn data={consultParticipantsPrevYear} label={(currentYear - 1) + ""} total={consultParticipantsPrevYear.reduce((s, p) => s + p.count, 0)} color="#3A7CA5" dim={consultParticipantsPrevYear.length === 0} />
+                    <ParticipantColumn data={consultParticipantsPrevYear} label={(currentYear - 1) + ""} total={consultParticipantsPrevYear.reduce((s, p) => s + p.count, 0)} color="#4E8FBF" dim={consultParticipantsPrevYear.length === 0} />
                   </div>
                 </div>
               </div>
@@ -1547,14 +1679,14 @@ function LibraryDashboard() {
             {/* Instruction Participant Breakdown */}
             {instrParticipants.length > 0 && (
               <div style={{ margin: "16px 0" }}>
-                <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: "4px solid #D4853F" }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>{"📚 Instruction Participants — " + periodLabel}</div>
+                <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1", borderLeft: "4px solid #D68A16" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>{"Instruction Participants — " + periodLabel}</div>
                   {instrParticipants.map(({ name, count }) => (
                     <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #f5f5f5" }}>
                       <span style={{ fontSize: 13, color: "#444" }}>{name}</span>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: Math.max(4, (count / Math.max(...instrParticipants.map(p => p.count))) * 80), height: 8, borderRadius: 4, background: "#D4853F" }} />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: "#D4853F", fontFamily: "'DM Mono', monospace", minWidth: 28, textAlign: "right" }}>{count}</span>
+                        <div style={{ width: Math.max(4, (count / Math.max(...instrParticipants.map(p => p.count))) * 80), height: 8, borderRadius: 4, background: "#D68A16" }} />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#D68A16", fontFamily: "'Lato', sans-serif", minWidth: 28, textAlign: "right" }}>{count}</span>
                       </div>
                     </div>
                   ))}
@@ -1565,8 +1697,8 @@ function LibraryDashboard() {
 
             {/* Yearly Totals */}
             {hasData && (
-              <div style={{ background: "#fff", borderRadius: 14, padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", margin: "16px 0", borderLeft: "4px solid #555" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 14 }}>📅 Year-to-Date Totals</div>
+              <div style={{ background: "#fff", borderRadius: 4, padding: "20px", border: "1px solid #E1E1E1", margin: "16px 0", borderLeft: "4px solid #555" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 14 }}>Year-to-Date Totals</div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
@@ -1578,30 +1710,30 @@ function LibraryDashboard() {
                     </thead>
                     <tbody>
                       {[
-                        { label: "Consultations", cur: yearlyTotals.current.consults, prev: yearlyTotals.previous.consults, color: "#2D5A7B" },
-                        { label: "Instruction Sessions", cur: yearlyTotals.current.instr, prev: yearlyTotals.previous.instr, color: "#D4853F" },
-                        { label: "Est. Attendees", cur: yearlyTotals.current.attendees, prev: yearlyTotals.previous.attendees, color: "#7B68AE" },
-                        { label: "Events", cur: yearlyTotals.current.events, prev: yearlyTotals.previous.events, color: "#5B8C5A" },
-                        { label: "Instruction Prep Time", isPrep: true, curMin: yearlyTotals.current.instrPrep, curMax: yearlyTotals.current.instrPrep, prevMin: yearlyTotals.previous.instrPrep, prevMax: yearlyTotals.previous.instrPrep, color: "#D4853F" },
-                        { label: "Sync Consult Prep Time", isPrep: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#3A7CA5" },
-                        { label: "Event Prep Time", isPrep: true, curMin: yearlyTotals.current.evtPrep, curMax: yearlyTotals.current.evtPrep, prevMin: yearlyTotals.previous.evtPrep, prevMax: yearlyTotals.previous.evtPrep, color: "#5B8C5A" },
-                        { label: "Async Consultation Time", isPrep: true, curMin: yearlyTotals.current.asyncTimeMin, curMax: yearlyTotals.current.asyncTimeMax, prevMin: yearlyTotals.previous.asyncTimeMin, prevMax: yearlyTotals.previous.asyncTimeMax, color: "#2D5A7B" },
+                        { label: "Consultations", cur: yearlyTotals.current.consults, prev: yearlyTotals.previous.consults, color: "#1F6FA8" },
+                        { label: "Instruction Sessions", cur: yearlyTotals.current.instr, prev: yearlyTotals.previous.instr, color: "#D68A16" },
+                        { label: "Est. Attendees", cur: yearlyTotals.current.attendees, prev: yearlyTotals.previous.attendees, color: "#A6317A" },
+                        { label: "Events", cur: yearlyTotals.current.events, prev: yearlyTotals.previous.events, color: "#146B42" },
+                        { label: "Instruction Prep Time", isPrep: true, curMin: yearlyTotals.current.instrPrep, curMax: yearlyTotals.current.instrPrep, prevMin: yearlyTotals.previous.instrPrep, prevMax: yearlyTotals.previous.instrPrep, color: "#D68A16" },
+                        { label: "Sync Consult Prep Time", isPrep: true, est: true, curMin: yearlyTotals.current.consultPrepMin, curMax: yearlyTotals.current.consultPrepMax, prevMin: yearlyTotals.previous.consultPrepMin, prevMax: yearlyTotals.previous.consultPrepMax, color: "#4E8FBF" },
+                        { label: "Event Prep Time", isPrep: true, curMin: yearlyTotals.current.evtPrep, curMax: yearlyTotals.current.evtPrep, prevMin: yearlyTotals.previous.evtPrep, prevMax: yearlyTotals.previous.evtPrep, color: "#146B42" },
+                        { label: "Async Consultation Time", isPrep: true, est: true, curMin: yearlyTotals.current.asyncTimeMin, curMax: yearlyTotals.current.asyncTimeMax, prevMin: yearlyTotals.previous.asyncTimeMin, prevMax: yearlyTotals.previous.asyncTimeMax, color: "#1F6FA8" },
                       ].map((row, i) => (
                         <tr key={i} style={{ borderBottom: "1px solid #f3f3f3" }}>
                           <td style={{ padding: "8px 10px", color: "#444", fontWeight: 500 }}>{row.label}</td>
                           {row.isPrep ? (
                             <>
-                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>
-                                {formatPrepTime(row.curMin, row.curMax)}
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'Lato', sans-serif" }}>
+                                {row.est ? formatEstHours(row.curMin, row.curMax) : formatPrepTime(row.curMin, row.curMax)}
                               </td>
-                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>
-                                {formatPrepTime(row.prevMin, row.prevMax)}
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'Lato', sans-serif" }}>
+                                {row.est ? formatEstHours(row.prevMin, row.prevMax) : formatPrepTime(row.prevMin, row.prevMax)}
                               </td>
                             </>
                           ) : (
                             <>
-                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>{row.cur.toLocaleString()}</td>
-                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'DM Mono', monospace" }}>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'Lato', sans-serif" }}>{row.cur.toLocaleString()}</td>
+                              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: row.color, fontFamily: "'Lato', sans-serif" }}>
                                 {row.prev.toLocaleString()}
                                 {row.cur > 0 && row.prev > 0 && (() => {
                                   const pct = ((row.cur - row.prev) / row.prev * 100).toFixed(0);
@@ -1622,9 +1754,9 @@ function LibraryDashboard() {
 
             {/* Comparison bars */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "16px 0" }}>
-              {consultData && <ComparisonBar currentData={consultMonth.length} yearAgoData={consultYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && consultYACurrent.length > 0 ? comparisonRange.label : null} label="Consultations" color="#2D5A7B" />}
-              {instrData && <ComparisonBar currentData={instrMonth.length} yearAgoData={instrYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && instrYACurrent.length > 0 ? comparisonRange.label : null} label="Instruction" color="#D4853F" />}
-              {evtData && <ComparisonBar currentData={evtMonth.length} yearAgoData={evtYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && evtYACurrent.length > 0 ? comparisonRange.label : null} label="Events" color="#5B8C5A" />}
+              {consultData && <ComparisonBar currentData={consultMonth.length} yearAgoData={consultYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && consultYACurrent.length > 0 ? comparisonRange.label : null} label="Consultations" color="#1F6FA8" />}
+              {instrData && <ComparisonBar currentData={instrMonth.length} yearAgoData={instrYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && instrYACurrent.length > 0 ? comparisonRange.label : null} label="Instruction" color="#D68A16" />}
+              {evtData && <ComparisonBar currentData={evtMonth.length} yearAgoData={evtYACurrent.length || 0} currentLabel={periodLabel} yearAgoLabel={comparisonRange && evtYACurrent.length > 0 ? comparisonRange.label : null} label="Events" color="#146B42" />}
             </div>
 
             {/* Trend */}
@@ -1634,7 +1766,7 @@ function LibraryDashboard() {
 
             {/* Consultation breakdowns — sync/async + by college on one row */}
             <div style={{ display: "grid", gridTemplateColumns: "minmax(250px, 1fr) minmax(350px, 2fr)", gap: 14, margin: "16px 0" }}>
-              {consultByType.length > 0 && <TypeBreakdownChart data={consultByType} title={"Sync vs Async (" + periodLabel + ")"} colors={["#2D5A7B", "#3A7CA5"]} />}
+              {consultByType.length > 0 && <StackedShare data={consultByType} title={"Sync vs Async (" + periodLabel + ")"} colors={["#1F6FA8", "#4E8FBF"]} />}
               {consultMonth.length > 0 && (() => {
                 const colleges = {};
                 const getCollege = (r) => r._college || r["College or Affiliation"] || r["College"] || "Unknown";
@@ -1650,7 +1782,7 @@ function LibraryDashboard() {
                   setDrilldown({
                     title: "Consultations — " + collegeName + " (" + periodLabel + ")",
                     rows: matchingRows,
-                    color: "#2D5A7B",
+                    color: "#1F6FA8",
                     columns: [
                       { key: "_date", label: "Date", width: 90, render: v => v ? v.substring(0, 10) : "—" },
                       { key: "_name", label: "Staff", width: 130 },
@@ -1662,10 +1794,10 @@ function LibraryDashboard() {
                   });
                 };
                 return (
-                  <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                  <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif" }}>{"Consultations by College — " + periodLabel}</div>
-                      <div style={{ fontSize: 11, color: "#aaa" }}>Click a bar to see records</div>
+                      <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", fontFamily: "'Lato', sans-serif" }}>{"Consultations by College — " + periodLabel}</div>
+                      <div style={{ fontSize: 11, color: "#aaa" }}>{Object.keys(colleges).length > 12 ? \`Top 12 of \${Object.keys(colleges).length} · click a bar\` : "Click a bar to see records"}</div>
                     </div>
                     <ResponsiveContainer width="100%" height={Math.max(200, data.length * 32)}>
                       <BarChart data={data} layout="vertical" margin={{ left: 20, right: 20 }}>
@@ -1673,7 +1805,7 @@ function LibraryDashboard() {
                         <XAxis type="number" tick={{ fontSize: 11 }} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={155} />
                         <Tooltip />
-                        <Bar dataKey="count" fill="#2D5A7B" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(d) => handleBarClick(d)} />
+                        <Bar dataKey="count" fill="#1F6FA8" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(d) => handleBarClick(d)} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -1684,17 +1816,27 @@ function LibraryDashboard() {
             {/* Instruction type breakdown */}
             {instrByType.length > 0 && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, margin: "16px 0" }}>
-                <TypeBreakdownChart data={instrByType} title={"Instruction — Session Type (" + periodLabel + ")"} colors={PALETTE.slice(3)} />
+                <CategoryBars data={instrByType} title={"Instruction — Session Type (" + periodLabel + ")"} color="#D68A16" />
               </div>
             )}
 
+            </>
+            )}
+
+            {activeTab === "details" && (
+            <>
             {/* Person breakdowns */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, margin: "16px 0" }}>
-              {consultByPerson.length > 0 && <PersonTable data={consultByPerson} label={"Consultations by Person — " + periodLabel} color="#2D5A7B" />}
-              {instrByPerson.length > 0 && <PersonTable data={instrByPerson} label={"Instruction Sessions by Person — " + periodLabel} color="#D4853F" />}
-              {evtByPerson.length > 0 && <PersonTable data={evtByPerson} label={"Events by Person — " + periodLabel} color="#5B8C5A" />}
+              {consultByPerson.length > 0 && <PersonTable data={consultByPerson} label={"Consultations by Person — " + periodLabel} color="#1F6FA8" />}
+              {instrByPerson.length > 0 && <PersonTable data={instrByPerson} label={"Instruction Sessions by Person — " + periodLabel} color="#D68A16" />}
+              {evtByPerson.length > 0 && <PersonTable data={evtByPerson} label={"Events by Person — " + periodLabel} color="#146B42" />}
             </div>
 
+            </>
+            )}
+
+            {activeTab === "dashboard" && (
+            <>
             {/* College breakdown for instruction */}
             {instrMonth.length > 0 && (() => {
               const colleges = {};
@@ -1707,7 +1849,7 @@ function LibraryDashboard() {
                 setDrilldown({
                   title: \`Instruction Sessions — \${collegeName} (\${periodLabel})\`,
                   rows: matchingRows,
-                  color: "#D4853F",
+                  color: "#D68A16",
                   columns: [
                     { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
                     { key: "Library instructor(s)", label: "Instructor(s)", width: 160 },
@@ -1719,10 +1861,10 @@ function LibraryDashboard() {
                 });
               };
               return (
-                <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", margin: "16px 0" }}>
+                <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1", margin: "16px 0" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#333", fontFamily: "'DM Sans', sans-serif" }}>Instruction Sessions by College — {periodLabel}</div>
-                    <div style={{ fontSize: 11, color: "#aaa" }}>Click a bar to see records</div>
+                    <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, textTransform: "uppercase", letterSpacing: "0.11em", fontFamily: "'Lato', sans-serif" }}>Instruction Sessions by College — {periodLabel}</div>
+                    <div style={{ fontSize: 11, color: "#aaa" }}>{Object.keys(colleges).length > 12 ? \`Top 12 of \${Object.keys(colleges).length} · click a bar\` : "Click a bar to see records"}</div>
                   </div>
                   <ResponsiveContainer width="100%" height={Math.max(200, data.length * 32)}>
                     <BarChart data={data} layout="vertical" margin={{ left: 180 }}>
@@ -1730,16 +1872,21 @@ function LibraryDashboard() {
                       <XAxis type="number" tick={{ fontSize: 11 }} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={175} />
                       <Tooltip />
-                      <Bar dataKey="count" fill="#D4853F" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(d) => handleBarClick(d)} />
+                      <Bar dataKey="count" fill="#D68A16" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(d) => handleBarClick(d)} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               );
             })()}
+            </>
+            )}
+
+            {activeTab === "details" && (
+            <>
             {/* ——— Detail Lists ——— */}
             {syncMonth.length > 0 && <DetailList
               title={\`Synchronous Consultations — \${periodLabel}\`}
-              color="#2D5A7B"
+              color="#1F6FA8"
               rows={syncMonth}
               columns={[
                 { key: "Date", label: "Date", width: 90 },
@@ -1756,7 +1903,7 @@ function LibraryDashboard() {
 
             {asyncMonth.length > 0 && <DetailList
               title={\`Asynchronous Consultations — \${periodLabel}\`}
-              color="#3A7CA5"
+              color="#4E8FBF"
               rows={asyncMonth}
               columns={[
                 { key: asyncDateCol, label: "Date", width: 90 },
@@ -1771,7 +1918,7 @@ function LibraryDashboard() {
 
             {instrMonth.length > 0 && <DetailList
               title={\`Instruction Sessions — \${periodLabel}\`}
-              color="#D4853F"
+              color="#D68A16"
               rows={instrMonth}
               columns={[
                 { key: "Start Date", label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
@@ -1786,7 +1933,7 @@ function LibraryDashboard() {
 
             {evtMonth.length > 0 && <DetailList
               title={\`Events — \${periodLabel}\`}
-              color="#5B8C5A"
+              color="#146B42"
               rows={evtMonth}
               columns={(() => {
                 if (!evtMonth.length) return [];
@@ -1802,6 +1949,9 @@ function LibraryDashboard() {
                 return [...cols, ...extra.map(k => ({ key: k, label: k, width: null }))];
               })()}
             />}
+
+            </>
+            )}
 
           </>
         )}
