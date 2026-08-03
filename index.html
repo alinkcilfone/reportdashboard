@@ -1436,6 +1436,46 @@ function LibraryDashboard() {
               ⚠ The events file doesn't have an "Event Organizer" column. Per-person breakdown won't be available for events. Expected columns: "Event Organizer" and optionally "Presenter".
             </div>
           )}
+
+          {/* How-to-pull instructions (collapsible) */}
+          {(() => {
+            const guide = [
+              { src: "LibInsight — Instruction (Jul 1 2026 onward)", zone: "Instruction — Jul 1 2026+",
+                steps: ["Datasets", "Instruction Statistics", "7/1/2026 → desired end date", "Generate report", "Reports tab", "Export Data to CSV"],
+                file: "Instruction_StartDate-EndDate.csv" },
+              { src: "LibInsight — Instruction (through Jun 30 2026)", zone: "Instruction — through Jun 30 2026",
+                steps: ["Datasets", "Retired Instruction Statistics", "1/1/2018 → 6/30/2026", "Generate report", "Reports tab", "Export Data to CSV"],
+                file: "Instruction_StartDate-EndDate.csv" },
+              { src: "LibAnswers — Async Consults", zone: "Consults (Async) — one export per date range",
+                steps: ["Ref Analytics", "Statistics", "Type of Support: Select All", "Select Dates", "Generate", "Export", "Export Transactions"],
+                file: "LibAnswers_StartDate-EndDate.csv" },
+              { src: "LibCal — Consults (Sync)", zone: "Consults (Sync)",
+                steps: ["Appointments", "Booking Explorer", "Select All Users", "Select Dates", "Go", "Export"],
+                file: "Consults_StartDate-EndDate.csv" },
+              { src: "LibCal — Events", zone: "Events",
+                steps: ["Events", "Event Explorer", "Select Dates", "Show Registration Responses: No", "Submit", "Export"],
+                file: "Events_StartDate-EndDate.csv" },
+            ];
+            return (
+              <details style={{ marginTop: 16, borderTop: "1px solid " + NU.border, paddingTop: 14 }}>
+                <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 900, letterSpacing: "0.11em", textTransform: "uppercase", color: NU.red }}>
+                  How to pull these files from Springshare
+                </summary>
+                <div style={{ fontSize: 12, color: NU.muted, margin: "10px 0 12px", lineHeight: 1.6 }}>
+                  Instruction and Async each have two drop zones split at July 1, 2026 — export a "through 6/30/2026" file and a "7/1/2026 onward" file for each. Sync consults and Events are single files. Use ISO dates (YYYY-MM-DD) where possible.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
+                  {guide.map(g => (
+                    <div key={g.src} style={{ border: "1px solid " + NU.border, borderRadius: 4, padding: "12px 14px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 900, color: NU.ink, textTransform: "uppercase", letterSpacing: "0.06em" }}>{g.src}</div>
+                      <div style={{ fontSize: 12, color: "#3a3a3a", lineHeight: 1.8, margin: "7px 0 9px" }}>{g.steps.join("  →  ")}</div>
+                      <div style={{ fontSize: 11, color: NU.muted }}>Save as <span style={{ fontWeight: 700, color: NU.ink }}>{g.file}</span> · drop in <span style={{ fontWeight: 700, color: NU.ink }}>{g.zone}</span></div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            );
+          })()}
         </div>
 
         {!hasData && (
