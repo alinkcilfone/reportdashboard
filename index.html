@@ -468,7 +468,7 @@ function StackedShare({ data, title, colors }) {
   );
 }
 
-function TrendChart({ referenceData, instructionData, eventsData, allMonths }) {
+function TrendChart({ referenceData, instructionData, eventsData, allMonths, prepTrend }) {
   const hasEventsData = eventsData && eventsData.length;
   const chartData = allMonths.map(mk => {
     const refCount = (referenceData || []).filter(r => getMonthKey(r["_date"] || r["Date"]) === mk).length;
@@ -480,6 +480,13 @@ function TrendChart({ referenceData, instructionData, eventsData, allMonths }) {
     { key: "Consultations", color: "#1F6FA8" },
     { key: "Instruction", color: "#D68A16" },
     ...(hasEventsData ? [{ key: "Events", color: "#146B42" }] : []),
+  ];
+  const hasPrepData = prepTrend && prepTrend.some(d => d.Total > 0);
+  const prepLines = [
+    { key: "Total", color: NU.ink },
+    { key: "Instruction", color: "#D68A16" },
+    { key: "Consultations", color: "#1F6FA8" },
+    { key: "Events", color: "#146B42" },
   ];
   return (
     <div style={{ background: "#fff", borderRadius: 4, padding: "18px 20px", border: "1px solid #E1E1E1" }}>
@@ -502,6 +509,23 @@ function TrendChart({ referenceData, instructionData, eventsData, allMonths }) {
             </ResponsiveContainer>
           </div>
         ))}
+        {hasPrepData && (
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: NU.ink, marginBottom: 4 }}>Total Prep Time (hrs)</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={prepTrend} margin={{ top: 5, right: 12, left: -12, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {prepLines.map(p => (
+                  <Line key={p.key} type="monotone" dataKey={p.key} stroke={p.color} strokeWidth={p.key === "Total" ? 2.5 : 2} dot={{ r: 3 }} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1196,6 +1220,30 @@ function LibraryDashboard() {
       return d >= periodRange.start && d <= periodRange.end;
     });
   }, [allMonths, periodRange, viewType, viewPeriod]);
+
+  // Monthly prep-time trend (hours) — Consultations here is the combined "Total Consultation
+  // Prep Time" (prep/followup + async question time), same definition as the Overview Snapshot.
+  const prepTrend = useMemo(() => {
+    return periodMonths.map(mk => {
+      const instrMin = (instrData || []).filter(r => getMonthKey(r["Start Date"]) === mk)
+        .reduce((s, r) => s + (parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) || 0), 0);
+      const evtMin = (evtData || []).filter(r => getMonthKey(r["Date"] || r["Start Date"] || r["Event Date"]) === mk)
+        .reduce((s, r) => s + (parseInt(r["Event Note"] || "0", 10) || 0), 0);
+      let consultMin = 0;
+      (asyncData || []).filter(r => getMonthKey(r[asyncDateCol]) === mk).forEach(r => {
+        const range = parseTimeRange(r["Time spent"]);
+        consultMin += (range.min + range.max) / 2;
+      });
+      const totalMin = instrMin + evtMin + consultMin;
+      return {
+        month: formatMonthKey(mk),
+        Instruction: +(instrMin / 60).toFixed(1),
+        Consultations: +(consultMin / 60).toFixed(1),
+        Events: +(evtMin / 60).toFixed(1),
+        Total: +(totalMin / 60).toFixed(1),
+      };
+    });
+  }, [periodMonths, instrData, evtData, asyncData, asyncDateCol]);
 
   // Aliases for backward compat with variable names used in the JSX
   const consultMonth = consultPeriod;
@@ -2097,7 +2145,7 @@ function LibraryDashboard() {
 
             {/* Trend */}
             <div style={{ margin: "16px 0" }}>
-              <TrendChart referenceData={consultData} instructionData={instrData} eventsData={evtData} allMonths={periodMonths} />
+              <TrendChart referenceData={consultData} instructionData={instrData} eventsData={evtData} allMonths={periodMonths} prepTrend={prepTrend} />
             </div>
             </>
             )}
