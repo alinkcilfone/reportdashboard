@@ -1362,6 +1362,18 @@ function LibraryDashboard() {
     return { min: totalMin, max: totalMax };
   }, [asyncAllPeriod]);
 
+  const asyncConsultTimeRangeYA = useMemo(() => {
+    let totalMin = 0, totalMax = 0;
+    asyncAllComparison.forEach(r => {
+      if (!(r["Type of Support"] || "").toLowerCase().includes("extra consult prep")) {
+        const range = parseTimeRange(r["Time spent"]);
+        totalMin += range.min;
+        totalMax += range.max;
+      }
+    });
+    return { min: totalMin, max: totalMax };
+  }, [asyncAllComparison]);
+
   // Combined prep: instruction exact + consult range
   const totalPrepMin = instrPrepMinutes + consultPrepRange.min;
   const totalPrepMax = instrPrepMinutes + consultPrepRange.max;
@@ -1665,9 +1677,11 @@ function LibraryDashboard() {
                     { curDisplay: consultMonth.length + " total", curNum: consultMonth.length,
                       prevDisplay: consultYACurrent.length + " total", prevNum: consultYACurrent.length },
                   ] },
-                { label: "Consultation Prep Time", color: "#4E8FBF",
-                  curDisplay: formatEstHours(consultPrepRange.min, consultPrepRange.max), curNum: (consultPrepRange.min + consultPrepRange.max) / 2,
-                  prevDisplay: formatEstHours(consultPrepRangeYA.min, consultPrepRangeYA.max), prevNum: (consultPrepRangeYA.min + consultPrepRangeYA.max) / 2 },
+                { label: "Total Consultation Prep Time", color: "#4E8FBF",
+                  curDisplay: formatEstHours(consultPrepRange.min + asyncConsultTimeRange.min, consultPrepRange.max + asyncConsultTimeRange.max),
+                  curNum: (consultPrepRange.min + consultPrepRange.max + asyncConsultTimeRange.min + asyncConsultTimeRange.max) / 2,
+                  prevDisplay: formatEstHours(consultPrepRangeYA.min + asyncConsultTimeRangeYA.min, consultPrepRangeYA.max + asyncConsultTimeRangeYA.max),
+                  prevNum: (consultPrepRangeYA.min + consultPrepRangeYA.max + asyncConsultTimeRangeYA.min + asyncConsultTimeRangeYA.max) / 2 },
                 { label: "Events", color: "#146B42",
                   curDisplay: String(evtMonth.length), curNum: evtMonth.length,
                   prevDisplay: String(evtYACurrent.length), prevNum: evtYACurrent.length },
