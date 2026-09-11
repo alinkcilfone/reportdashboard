@@ -1031,11 +1031,17 @@ function LibraryDashboard() {
     if (!instrDataAll) return null;
     if (!activeFilterNames) return instrDataAll; // "All Staff" — no filter
     return instrDataAll.filter(r => {
-      // Team field takes priority when present (new file); else fall back to
-      // instructor-name matching (old file has no "Library department(s)").
+      // A session belongs to a team if EITHER its "Library department(s)" value
+      // maps to that team (new file, Jul 2026+) OR one of its instructors is on
+      // the roster. The union matters for co-taught cross-team sessions: the
+      // department field holds one value, so a session Rachel Landis co-teaches
+      // with ASSH is tagged "ASSH" and would otherwise drop out of STEM&E.
+      // Consequence: such a session counts once for each team involved, so team
+      // totals don't sum to the library total (also true of the old file, which
+      // had no department field and matched on names alone).
       const dept = (r["Library department(s)"] || "").trim();
-      if (dept) {
-        return dept.split(";").map(deptToTeam).some(t => selectedTeams.includes(t));
+      if (dept && dept.split(";").map(deptToTeam).some(t => selectedTeams.includes(t))) {
+        return true;
       }
       return isTeamMember(r["Library instructor(s)"], activeFilterNames);
     });
