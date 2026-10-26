@@ -2,9 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-kN6HmcNrTmjzza1bdUjK+rGj6Sa2a8CInTvZ0y/52Q8=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Library Services Activity Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -17,23 +19,55 @@
 </head>
 <body>
   <div id="root"><div id="loading"><div class="spinner"></div><div>Loading dashboard...</div></div></div>
-  <script>var _loadErrors = [];</script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" onerror="_loadErrors.push('React')"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" onerror="_loadErrors.push('ReactDOM')"></script>
-  <script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js" onerror="_loadErrors.push('react-is')"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/3.2.1/Recharts.min.js" onerror="_loadErrors.push('Recharts')"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" onerror="_loadErrors.push('Babel')"></script>
+  <!-- Subresource Integrity: the browser hashes each file on arrival and refuses
+       to run it unless the hash matches. This page holds patron names and emails
+       in memory, so a tampered library would be able to read and exfiltrate them.
+       crossorigin="anonymous" is REQUIRED for SRI to work (the browser needs a
+       CORS response to be allowed to hash the body); both CDNs send it.
+       Regenerate a hash after any version bump:
+         curl -sSL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+       Recharts is served from unpkg, not cdnjs: the recharts npm package ships
+       only umd/Recharts.js, so cdnjs's Recharts.min.js is a re-minified build by
+       cdnjs that cannot be checked against anything upstream. unpkg serves the
+       published file byte-for-byte (verified against the npm tarball). -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js" integrity="sha384-XYVQ7LtYqgha4ByzNRLR6NHo9p0yVDvmTNuQkiIweU0U8WqLWBkH1L771VlP6fYx" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://unpkg.com/recharts@3.2.1/umd/Recharts.js" integrity="sha384-+oFMAx166oTDDAxI7eZpQTbx9cXnGNl4HRTZGMYdKqmwgwv8ONNM3+9nG3L8MqjP" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" integrity="sha384-AISI5AuDG6E8DeEiFMVB3rGQxhZt24OU0avMp+GMV64+tpnA3+Z6F5MT0f96iPva" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script>
+    // Built with DOM nodes, not innerHTML: msg can carry an exception message,
+    // and an error string is never meant to be parsed as page markup.
     function showError(msg) {
-      document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#c55;font-family:sans-serif;max-width:600px;margin:0 auto"><h2 style="margin-bottom:12px">Dashboard failed to load</h2><p>' + msg + '</p><p style="margin-top:16px;color:#888;font-size:13px">This dashboard needs an internet connection to load its charting libraries.</p></div>';
+      var root = document.getElementById('root');
+      root.textContent = '';
+      var box = document.createElement('div');
+      box.setAttribute('style', 'padding:40px;text-align:center;color:#c55;font-family:sans-serif;max-width:600px;margin:0 auto');
+      var h = document.createElement('h2');
+      h.setAttribute('style', 'margin-bottom:12px');
+      h.textContent = 'Dashboard failed to load';
+      var p = document.createElement('p');
+      p.textContent = msg;
+      var note = document.createElement('p');
+      note.setAttribute('style', 'margin-top:16px;color:#888;font-size:13px');
+      note.textContent = 'This dashboard loads its charting libraries from a CDN, so it needs an internet connection. If you are online, a library may have been refused by its integrity check or by the page security policy; open the browser console for the exact reason.';
+      box.appendChild(h); box.appendChild(p); box.appendChild(note);
+      root.appendChild(box);
     }
     function bootDashboard() {
-      if (_loadErrors.length > 0) { showError('Failed to load scripts: ' + _loadErrors.join(', ')); return; }
-      if (!window.React || !window.ReactDOM || !window.Recharts || !window.Babel) {
-        var missing = [];
-        if (!window.React) missing.push('React'); if (!window.ReactDOM) missing.push('ReactDOM');
-        if (!window.Recharts) missing.push('Recharts'); if (!window.Babel) missing.push('Babel');
-        showError('Scripts loaded but libraries not found: ' + missing.join(', ')); return;
+      // Each library is detected by its global rather than an onerror="..."
+      // attribute. Inline event handlers are blocked by the CSP and a script
+      // hash cannot cover them, and checking the globals catches every failure
+      // mode anyway: offline, blocked, or refused by Subresource Integrity.
+      var missing = [];
+      if (!window.React) missing.push('React');
+      if (!window.ReactDOM) missing.push('ReactDOM');
+      if (!window.ReactIs) missing.push('react-is');
+      if (!window.Recharts) missing.push('Recharts');
+      if (!window.Babel) missing.push('Babel');
+      if (missing.length > 0) {
+        showError('These libraries did not load: ' + missing.join(', ') + '.');
+        return;
       }
       var jsxCode = `
 const { useState, useCallback, useMemo, useRef, useEffect } = React;
@@ -163,7 +197,7 @@ function parseCSV(text) {
   if (!filtered.length) return [];
   const headers = filtered[0].map(h => h.trim().replace(/^\\uFEFF/, ""));
   return filtered.slice(1).map(row => {
-    const obj = {};
+    const obj = Object.create(null);
     headers.forEach((h, i) => { obj[h] = (row[i] || "").trim(); });
     return obj;
   });
@@ -258,7 +292,7 @@ function parseBlockSummary(text) {
 
     // Detect Month/Year header row for the current person block
     if (cellALower === "month/year" && row.length > 2) {
-      const map = {};
+      const map = Object.create(null);
       for (let ci = 1; ci < row.length; ci++) {
         const mk = parseMonthHeader(row[ci]);
         if (mk) map[ci] = mk;
@@ -343,18 +377,45 @@ function getAllMonths(data1, data2, data3) {
   return Array.from(set).sort();
 }
 
+// Springshare exports run to a few MB at most. The accept=".csv" below is only
+// a hint to the file picker and drag-and-drop ignores it entirely, so without a
+// check here a stray PDF or a huge file reaches parseCSV and freezes the tab
+// with no message. Reject it up front and say why instead.
+const MAX_UPLOAD_MB = 25;
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+
 function DropZone({ label, fileKey, onFile, fileName, color }) {
   const [drag, setDrag] = useState(false);
+  const [fileError, setFileError] = useState(null);
   const inputRef = useRef(null);
+  const readFile = useCallback((f) => {
+    if (!f) return;
+    if (!/\\.csv$/i.test(f.name)) {
+      setFileError(\`"\${f.name}" is not a .csv file. Export it from Springshare as CSV.\`);
+      return;
+    }
+    if (f.size === 0) {
+      setFileError(\`"\${f.name}" is empty.\`);
+      return;
+    }
+    if (f.size > MAX_UPLOAD_BYTES) {
+      setFileError(\`"\${f.name}" is \${(f.size / 1048576).toFixed(1)} MB, over the \${MAX_UPLOAD_MB} MB limit.\`);
+      return;
+    }
+    setFileError(null);
+    const r = new FileReader();
+    r.onerror = () => setFileError(\`Could not read "\${f.name}".\`);
+    r.onload = (ev) => onFile(fileKey, ev.target.result, f.name);
+    r.readAsText(f);
+  }, [fileKey, onFile]);
   const handleDrop = useCallback((e) => {
     e.preventDefault(); setDrag(false);
-    const f = e.dataTransfer.files[0];
-    if (f) { const r = new FileReader(); r.onload = (ev) => onFile(fileKey, ev.target.result, f.name); r.readAsText(f); }
-  }, [fileKey, onFile]);
+    readFile(e.dataTransfer.files[0]);
+  }, [readFile]);
   const handleClick = () => inputRef.current?.click();
   const handleChange = (e) => {
-    const f = e.target.files[0];
-    if (f) { const r = new FileReader(); r.onload = (ev) => onFile(fileKey, ev.target.result, f.name); r.readAsText(f); }
+    readFile(e.target.files[0]);
+    e.target.value = ""; // let the same file be re-picked after a failure
   };
   return (
     <div onClick={handleClick} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={handleDrop}
@@ -370,6 +431,9 @@ function DropZone({ label, fileKey, onFile, fileName, color }) {
       ) : (
         <div style={{ fontSize: 12, color: "#999" }}>Drop CSV or click to browse</div>
       )}
+      {fileError ? (
+        <div role="alert" style={{ fontSize: 11, color: "#B3261E", lineHeight: 1.35, maxWidth: 240 }}>{fileError}</div>
+      ) : null}
     </div>
   );
 }
@@ -1183,7 +1247,7 @@ function LibraryDashboard() {
 
   const evtDeduped = useMemo(() => {
     if (!evtDataRaw) return null;
-    const byId = {};
+    const byId = Object.create(null);
     evtDataRaw.forEach(r => {
       const id = r[evtIdField] || "";
       if (!byId[id]) {
@@ -1262,20 +1326,20 @@ function LibraryDashboard() {
   const evtYACurrent = evtComparison;
   // Person breakdowns
   const consultByPerson = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     consultMonth.forEach(r => { const n = r._name || "Unknown"; counts[n] = (counts[n] || 0) + 1; });
     return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   }, [consultMonth]);
 
   const instrByPerson = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     instrMonth.forEach(r => { const n = r["Library instructor(s)"] || "Unknown"; counts[n] = (counts[n] || 0) + 1; });
     return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   }, [instrMonth]);
 
   // Events by person: each distinct event credits all its organizers and presenters
   const evtByPerson = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     evtMonth.forEach(r => {
       const credited = new Set();
       for (const name of (r._allOrganizers || [])) { credited.add(name); }
@@ -1296,13 +1360,13 @@ function LibraryDashboard() {
   }, [syncMonth, asyncMonth]);
 
   const instrByType = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     instrMonth.forEach(r => { const t = r["Type of session"] || "Other"; counts[t] = (counts[t] || 0) + 1; });
     return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [instrMonth]);
 
   const asyncByType = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     asyncMonth.forEach(r => { const t = r["Type of Support"] || "Other"; counts[t] = (counts[t] || 0) + 1; });
     return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [asyncMonth]);
@@ -1470,7 +1534,7 @@ function LibraryDashboard() {
   }, [viewPeriod]);
 
   const consultParticipants = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     consultMonth.forEach(r => {
       const level = normalizeLevel(r._studentLevel);
       counts[level] = (counts[level] || 0) + 1;
@@ -1481,7 +1545,7 @@ function LibraryDashboard() {
   const consultParticipantsYTD = useMemo(() => {
     if (!consultData) return [];
     const yStr = String(currentYear);
-    const counts = {};
+    const counts = Object.create(null);
     consultData.filter(r => (r._date || "").startsWith(yStr)).forEach(r => {
       const level = normalizeLevel(r._studentLevel);
       counts[level] = (counts[level] || 0) + 1;
@@ -1492,7 +1556,7 @@ function LibraryDashboard() {
   const consultParticipantsPrevYear = useMemo(() => {
     if (!consultData) return [];
     const yStr = String(currentYear - 1);
-    const counts = {};
+    const counts = Object.create(null);
     consultData.filter(r => (r._date || "").startsWith(yStr)).forEach(r => {
       const level = normalizeLevel(r._studentLevel);
       counts[level] = (counts[level] || 0) + 1;
@@ -1501,7 +1565,7 @@ function LibraryDashboard() {
   }, [consultData, currentYear]);
 
   const instrParticipants = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     instrMonth.forEach(r => {
       const raw = r["Participants"] || "Unknown";
       const primary = raw.split(";")[0].trim();
@@ -1843,7 +1907,7 @@ function LibraryDashboard() {
               {asyncMonth.length > 0 && (() => {
                 // Sync consults carry no college in the source data, so this chart is async-only —
                 // including sync rows would only ever add a meaningless "Unknown" bucket.
-                const colleges = {};
+                const colleges = Object.create(null);
                 const getCollege = (r) => r._college || r["College or Affiliation"] || r["College"] || "Unknown";
                 asyncMonth.forEach(r => {
                   const c = getCollege(r) || "Unknown";
@@ -1977,7 +2041,7 @@ function LibraryDashboard() {
 
             {/* College breakdown for instruction */}
             {instrMonth.length > 0 && (() => {
-              const colleges = {};
+              const colleges = Object.create(null);
               instrMonth.forEach(r => { const c = r["College"] || "Unknown"; colleges[c] = (colleges[c] || 0) + 1; });
               const data = Object.entries(colleges).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 12);
               const handleBarClick = (barData) => {
@@ -2257,7 +2321,21 @@ function LibraryDashboard() {
 }
 
 try { const root = ReactDOM.createRoot(document.getElementById('root')); root.render(React.createElement(LibraryDashboard)); }
-catch(e) { console.error('Render error:', e); document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#c55"><h2>Render Error</h2><pre style="margin-top:12px;text-align:left;font-size:12px;max-width:600px;margin-left:auto;margin-right:auto;overflow:auto;background:#f8f8f8;padding:16px;border-radius:8px">' + e.stack + '</pre></div>'; }
+catch(e) {
+  console.error('Render error:', e);
+  // e.stack can contain fragments of whatever the app was holding, so it is
+  // inserted as text, never as markup.
+  var _r = document.getElementById('root');
+  _r.textContent = '';
+  var _d = document.createElement('div');
+  _d.setAttribute('style', 'padding:40px;text-align:center;color:#c55');
+  var _h = document.createElement('h2');
+  _h.textContent = 'Render Error';
+  var _pre = document.createElement('pre');
+  _pre.setAttribute('style', 'margin-top:12px;text-align:left;font-size:12px;max-width:600px;margin-left:auto;margin-right:auto;overflow:auto;background:#f8f8f8;padding:16px;border-radius:8px');
+  _pre.textContent = e.stack;
+  _d.appendChild(_h); _d.appendChild(_pre); _r.appendChild(_d);
+}
 `;
       try { var compiled = Babel.transform(jsxCode, { presets: ['react'] }).code; eval(compiled); }
       catch(e) { console.error('Compile error:', e); showError('JSX compilation failed: ' + e.message); }
