@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-kN6HmcNrTmjzza1bdUjK+rGj6Sa2a8CInTvZ0y/52Q8=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-B3z+I7FMrAUbcR+gy4EFqp1gXRv5T4Ms23ysi+DWXgk=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Library Services Activity Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -438,6 +438,82 @@ function DropZone({ label, fileKey, onFile, fileName, color }) {
   );
 }
 
+// Event lists name their columns rather than showing whatever columns follow
+// the date. Positional picking used to surface the event Description, which
+// can carry organizers' and guests' contact details.
+const EVENT_COLUMNS = (dateCol) => [
+  { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
+  { key: "Title", label: "Event", width: null },
+  { key: "Event Organizer", label: "Organizer", width: 150 },
+  { key: "Presenter", label: "Presenter", width: 150 },
+  { key: "Confirmed Registrations", label: "Registrations", width: 100 },
+];
+
+// The de-identified file written by tools/clean_and_consolidate.py. Every
+// column carries its dataset as a prefix ("events.Start Date"), so each row
+// keeps only its own dataset's columns and the existing pipelines see the same
+// column names a raw export would give them.
+const CLEANED_FORMAT = "steme-deidentified/1";
+
+function splitCleanedFile(text) {
+  const rows = parseCSV(text);
+  const format = rows.length ? rows[0]["_format"] : undefined;
+  if (format === undefined) return { error: "This isn't a cleaned file. Raw Springshare exports go in the boxes below." };
+  if (format !== CLEANED_FORMAT) return { error: "This cleaned file was made by a different version of the cleaning script (" + format + "). Rerun the current script." };
+  const out = { sync: [], async: [], instruction: [], events: [] };
+  for (const r of rows) {
+    const d = r["_dataset"];
+    if (!out[d]) continue;
+    const prefix = d + ".";
+    const obj = Object.create(null);
+    for (const k in r) { if (k.startsWith(prefix)) obj[k.slice(prefix.length)] = r[k]; }
+    out[d].push(obj);
+  }
+  return { data: out };
+}
+
+// A real button rather than a clickable div, so it works by keyboard and
+// screen reader; results are announced through a live region.
+function CleanedFileZone({ onLoad, fileName, summary }) {
+  const [drag, setDrag] = useState(false);
+  const [fileError, setFileError] = useState(null);
+  const inputRef = useRef(null);
+  const readFile = useCallback((f) => {
+    if (!f) return;
+    if (!/\\.csv$/i.test(f.name)) { setFileError(\`"\${f.name}" is not a .csv file.\`); return; }
+    if (f.size > MAX_UPLOAD_BYTES) { setFileError(\`"\${f.name}" is over the \${MAX_UPLOAD_MB} MB limit.\`); return; }
+    const r = new FileReader();
+    r.onerror = () => setFileError(\`Could not read "\${f.name}".\`);
+    r.onload = (ev) => {
+      const result = splitCleanedFile(ev.target.result);
+      if (result.error) { setFileError(result.error); return; }
+      setFileError(null);
+      onLoad(result.data, f.name);
+    };
+    r.readAsText(f);
+  }, [onLoad]);
+  return (
+    <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+      onDrop={(e) => { e.preventDefault(); setDrag(false); readFile(e.dataTransfer.files[0]); }}
+      style={{ border: \`2px dashed \${drag ? NU.ink : "#B5B5B5"}\`, borderRadius: 4, padding: "16px 18px", background: fileName ? "#F2F7F4" : "#fff",
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
+      <input ref={inputRef} type="file" accept=".csv" style={{ display: "none" }} aria-hidden="true" tabIndex={-1}
+        onChange={(e) => { readFile(e.target.files[0]); e.target.value = ""; }} />
+      <button type="button" onClick={() => inputRef.current?.click()}
+        style={{ fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#fff", background: NU.ink, border: "none", borderRadius: 4, padding: "9px 16px", cursor: "pointer" }}>
+        Choose cleaned file
+      </button>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: NU.ink }}>Load cleaned file</div>
+        <div role="status" aria-live="polite" style={{ fontSize: 12, color: "#4A4A4A", marginTop: 2, lineHeight: 1.5 }}>
+          {fileName ? <><span aria-hidden="true">✓ </span>Loaded {fileName}{summary ? ". " + summary : ""}</> : "The one de-identified file from the cleaning script. Drop it here or choose it."}
+        </div>
+        {fileError ? <div role="alert" style={{ fontSize: 12, color: "#B3261E", marginTop: 4, lineHeight: 1.4 }}>Not loaded: {fileError}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 function KPICard({ title, value, sub, color, icon, onClick }) {
   return (
     <div onClick={onClick} style={{ background: NU.surface, borderRadius: 4, border: "1px solid " + NU.border, flex: 1, minWidth: 170, overflow: "hidden",
@@ -826,6 +902,8 @@ function LibraryDashboard() {
   const [instrOldName, setInstrOldName] = useState("");
   const [instrNewName, setInstrNewName] = useState("");
   const [evtName, setEvtName] = useState("");
+  const [cleaned, setCleaned] = useState(null); // { sync, async, instruction, events } row lists
+  const [cleanedName, setCleanedName] = useState("");
   const [viewType, setViewType] = useState("month"); // "month" | "calendar" | "review"
   const [viewPeriod, setViewPeriod] = useState(null); // e.g. "2026-04" for month, "2026" for year
   const [selectedTeams, setSelectedTeams] = useState(["STEM", "Entrepreneurship"]); // default = combined STEM&E
@@ -860,7 +938,10 @@ function LibraryDashboard() {
   };
 
   const syncIsBlock = false; // kept for detail list column switching
-  const syncParsed = useMemo(() => syncRaw ? parseCSV(syncRaw) : null, [syncRaw]);
+  // A cleaned file and raw exports are never loaded together (handleFile clears
+  // one when the other arrives), so each source below comes from one or the other.
+  const fromCleaned = (key) => cleaned && cleaned[key].length ? cleaned[key] : null;
+  const syncParsed = useMemo(() => syncRaw ? parseCSV(syncRaw) : fromCleaned("sync"), [syncRaw, cleaned]);
 
   // Process sync appointments: filter Active, merge duplicate columns, normalize fields
   const syncDataAll = useMemo(() => {
@@ -1001,9 +1082,10 @@ function LibraryDashboard() {
     const parts = [
       ...(asyncOldRaw ? parseCSV(asyncOldRaw) : []),
       ...(asyncNewRaw ? parseCSV(asyncNewRaw) : []),
+      ...(fromCleaned("async") || []),
     ];
     return parts.length ? parts : null;
-  }, [asyncOldRaw, asyncNewRaw]);
+  }, [asyncOldRaw, asyncNewRaw, cleaned]);
 
   // Instruction sessions: old + new merged. The new file (Jul 2026+) renames some
   // columns and adds "Library department(s)"; normalize new rows onto the canonical
@@ -1012,6 +1094,7 @@ function LibraryDashboard() {
     const parts = [
       ...(instrOldRaw ? parseCSV(instrOldRaw) : []),
       ...(instrNewRaw ? parseCSV(instrNewRaw) : []),
+      ...(fromCleaned("instruction") || []),
     ];
     if (!parts.length) return null;
     const ATT = "Estimated Number of Attendees";
@@ -1023,8 +1106,8 @@ function LibraryDashboard() {
       [PREP]: r[PREP] || r["Minutes on prep and follow-up"] || "",
       "Library department(s)": r["Library department(s)"] || "",
     }));
-  }, [instrOldRaw, instrNewRaw]);
-  const evtDataRaw = useMemo(() => evtRaw ? parseCSV(evtRaw) : null, [evtRaw]);
+  }, [instrOldRaw, instrNewRaw, cleaned]);
+  const evtDataRaw = useMemo(() => evtRaw ? parseCSV(evtRaw) : fromCleaned("events"), [evtRaw, cleaned]);
 
   // Detect the name/date columns for each consultation file (they may differ)
   const detectNameCol = (data) => {
@@ -1626,7 +1709,23 @@ function LibraryDashboard() {
     };
   }, [consultData, instrData, evtData, asyncData, currentYear, evtDateField, asyncDateCol]);
 
+  // Loading a cleaned file replaces any raw exports, and a raw export replaces
+  // a cleaned file. Mixing them would count the same sessions twice.
+  const handleCleaned = useCallback((data, name) => {
+    [setSyncRaw, setAsyncOldRaw, setAsyncNewRaw, setInstrOldRaw, setInstrNewRaw, setEvtRaw].forEach(s => s(null));
+    [setSyncName, setAsyncOldName, setAsyncNewName, setInstrOldName, setInstrNewName, setEvtName].forEach(s => s(""));
+    setCleaned(data); setCleanedName(name);
+  }, []);
+  const cleanedSummary = useMemo(() => {
+    if (!cleaned) return "";
+    const through = cleaned.sync.reduce((m, r) => (r["Date"] > m ? r["Date"] : m), "");
+    const n = (k) => cleaned[k].length.toLocaleString();
+    return \`\${n("sync")} sync consults, \${n("async")} async consults, \${n("instruction")} instruction sessions, \${n("events")} events\` +
+      (through ? \`, through \${through}\` : "") + ".";
+  }, [cleaned]);
+
   const handleFile = useCallback((key, text, name) => {
+    setCleaned(null); setCleanedName("");
     if (key === "sync") { setSyncRaw(text); setSyncName(name); }
     else if (key === "asyncOld") { setAsyncOldRaw(text); setAsyncOldName(name); }
     else if (key === "asyncNew") { setAsyncNewRaw(text); setAsyncNewName(name); }
@@ -1656,6 +1755,10 @@ function LibraryDashboard() {
         <div style={{ margin: "20px 0", background: "#fff", borderRadius: 4, padding: "20px 18px", border: "1px solid #E1E1E1" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.04em" }}>
             Load Data Files
+          </div>
+          <CleanedFileZone onLoad={handleCleaned} fileName={cleanedName} summary={cleanedSummary} />
+          <div style={{ fontSize: 12, color: "#4A4A4A", margin: "16px 0 10px" }}>
+            Or load raw Springshare exports, one per box:
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <DropZone label="Consults (Sync)" fileKey="sync" onFile={handleFile} fileName={syncName} color="#1F6FA8" />
@@ -2091,17 +2194,7 @@ function LibraryDashboard() {
                 onClick={() => setDrilldown({
                   title: \`Events — \${periodLabel}\`,
                   rows: evtMonth, color: "#146B42",
-                  columns: (() => {
-                    if (!evtMonth.length) return [];
-                    const keys = Object.keys(evtMonth[0]).filter(k => !k.startsWith("_all"));
-                    const dateCol = keys.find(k => k.toLowerCase().includes("date")) || keys[0];
-                    return [
-                      { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
-                      { key: "Event Organizer", label: "Organizer", width: 150 },
-                      { key: "Presenter", label: "Presenter", width: 150 },
-                      ...keys.filter(k => !["Event Organizer", "Presenter", dateCol].includes(k) && !k.startsWith("_")).slice(0, 3).map(k => ({ key: k, label: k, width: null })),
-                    ];
-                  })(),
+                  columns: EVENT_COLUMNS(evtDateField),
                 })} />}
               {evtData && <KPICard title="Event Registrations" value={evtConfirmedRegistrations.toLocaleString()}
                 sub={"Confirmed Registrations | Actual Attendance: " + evtActualAttendance.toLocaleString() + "\\nNote: Not all events require registrations"}
@@ -2237,7 +2330,6 @@ function LibraryDashboard() {
               columns={[
                 { key: "Date", label: "Date", width: 90 },
                 { key: "Entered By", label: "Staff", width: 140 },
-                { key: "Name", label: "Patron", width: 120 },
                 { key: "_studentLevel", label: "Level", width: 130 },
                 { key: "_college", label: "College", width: 170 },
                 { key: "_campus", label: "Campus", width: 90 },
@@ -2281,19 +2373,7 @@ function LibraryDashboard() {
               title={\`Events — \${periodLabel}\`}
               color="#146B42"
               rows={evtMonth}
-              columns={(() => {
-                if (!evtMonth.length) return [];
-                const keys = Object.keys(evtMonth[0]);
-                const dateCol = keys.find(k => k.toLowerCase().includes("date")) || keys[0];
-                const cols = [
-                  { key: dateCol, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
-                  { key: "Event Organizer", label: "Organizer", width: 150 },
-                  { key: "Presenter", label: "Presenter", width: 150 },
-                ];
-                const shown = new Set([dateCol, "Event Organizer", "Presenter"]);
-                const extra = keys.filter(k => !shown.has(k)).slice(0, 3);
-                return [...cols, ...extra.map(k => ({ key: k, label: k, width: null }))];
-              })()}
+              columns={EVENT_COLUMNS(evtDateField)}
             />}
 
             </>
