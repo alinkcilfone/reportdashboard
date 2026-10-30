@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-B3z+I7FMrAUbcR+gy4EFqp1gXRv5T4Ms23ysi+DWXgk=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YLKv7rHGq/SIJMY+uX0AmFTmjy9HIjHiiAknkmMQ8IM=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Library Services Activity Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -417,8 +417,12 @@ function DropZone({ label, fileKey, onFile, fileName, color }) {
     readFile(e.target.files[0]);
     e.target.value = ""; // let the same file be re-picked after a failure
   };
+  // role/tabIndex/onKeyDown make the box usable by keyboard and announce it as
+  // a button; a plain clickable div is invisible to both.
   return (
     <div onClick={handleClick} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={handleDrop}
+      role="button" tabIndex={0} aria-label={\`\${label}: \${fileName ? "loaded " + fileName + ". Choose a different file" : "choose a CSV file"}\`}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleClick(); } }}
       style={{ border: \`2px dashed \${drag ? color : "#ccc"}\`, borderRadius: 12, padding: "18px 16px", textAlign: "center", cursor: "pointer",
         background: fileName ? \`\${color}10\` : drag ? \`\${color}08\` : "transparent", transition: "all 0.2s", minHeight: 70, display: "flex",
         flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 6 }}>
@@ -448,6 +452,45 @@ const EVENT_COLUMNS = (dateCol) => [
   { key: "Presenter", label: "Presenter", width: 150 },
   { key: "Confirmed Registrations", label: "Registrations", width: 100 },
 ];
+
+// Springshare click paths, shared by both sets of upload instructions.
+// \`monthly\` marks the four exports the cleaning script needs each month.
+const SPRINGSHARE_GUIDE = [
+  { src: "LibCal: Consults (Sync)", zone: "Consults (Sync)", monthly: true,
+    steps: ["Appointments", "Booking Explorer", "Select All Users", "Select Dates", "Go", "Export"] },
+  { src: "LibAnswers: Async Consults", zone: "a Consults (Async) box, by date range", monthly: true,
+    steps: ["Ref Analytics", "Statistics", "Type of Support: Select All", "Select Dates", "Generate", "Export", "Export Transactions"] },
+  { src: "LibInsight: Instruction (from Jul 1 2026)", zone: "Instruction, Jul 1 2026+", monthly: true,
+    steps: ["Datasets", "Instruction Statistics", "Select Dates", "Generate report", "Reports tab", "Export Data to CSV"] },
+  { src: "LibInsight: Instruction (through Jun 30 2026)", zone: "Instruction, through Jun 30 2026", monthly: false,
+    steps: ["Datasets", "Retired Instruction Statistics", "1/1/2018 → 6/30/2026", "Generate report", "Reports tab", "Export Data to CSV"] },
+  { src: "LibCal: Events", zone: "Events", monthly: true,
+    steps: ["Events", "Event Explorer", "Select Dates", "Show Registration Responses: No", "Submit", "Export"] },
+];
+
+function GuideCard({ g, showZone }) {
+  return (
+    <div style={{ border: "1px solid " + NU.border, borderRadius: 4, padding: "10px 12px" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: NU.ink }}>{g.src}</div>
+      <div style={{ fontSize: 12, color: "#3a3a3a", lineHeight: 1.7, marginTop: 4 }}>{g.steps.join("  →  ")}</div>
+      {showZone ? <div style={{ fontSize: 11, color: NU.muted, marginTop: 4 }}>Drop in {g.zone}</div> : null}
+    </div>
+  );
+}
+
+// Folder and file names in the instructions.
+const PATH_STYLE = { fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.88em", background: "#F2F2F2", padding: "1px 4px", borderRadius: 3 };
+
+// Native <details>, so it opens by keyboard and screen readers announce its
+// state without any extra code.
+function Disclosure({ title, nested, children }) {
+  return (
+    <details style={nested ? { marginTop: 14 } : { marginTop: 14, borderTop: "1px solid " + NU.border, paddingTop: 12 }}>
+      <summary style={{ cursor: "pointer", fontSize: nested ? 12 : 13, fontWeight: 700, color: NU.ink }}>{title}</summary>
+      <div style={{ marginTop: 12 }}>{children}</div>
+    </details>
+  );
+}
 
 // The de-identified file written by tools/clean_and_consolidate.py. Every
 // column carries its dataset as a prefix ("events.Start Date"), so each row
@@ -1751,75 +1794,60 @@ function LibraryDashboard() {
 
       <div style={{ padding: "0 20px", maxWidth: 1000, margin: "0 auto" }}>
 
-        {/* Upload Area */}
+        {/* Upload Area: the cleaned file is the main path; raw exports sit behind a link */}
         <div style={{ margin: "20px 0", background: "#fff", borderRadius: 4, padding: "20px 18px", border: "1px solid #E1E1E1" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            Load Data Files
+          <div style={{ fontSize: 11, fontWeight: 900, color: NU.muted, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.11em" }}>
+            Load data
           </div>
           <CleanedFileZone onLoad={handleCleaned} fileName={cleanedName} summary={cleanedSummary} />
-          <div style={{ fontSize: 12, color: "#4A4A4A", margin: "16px 0 10px" }}>
-            Or load raw Springshare exports, one per box:
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <DropZone label="Consults (Sync)" fileKey="sync" onFile={handleFile} fileName={syncName} color="#1F6FA8" />
-            <DropZone label="Consults (Async) — through Jun 30 2026" fileKey="asyncOld" onFile={handleFile} fileName={asyncOldName} color="#4E8FBF" />
-            <DropZone label="Consults (Async) — Jul 1 2026+" fileKey="asyncNew" onFile={handleFile} fileName={asyncNewName} color="#4E8FBF" />
-            <DropZone label="Instruction — through Jun 30 2026" fileKey="instrOld" onFile={handleFile} fileName={instrOldName} color="#D68A16" />
-            <DropZone label="Instruction — Jul 1 2026+" fileKey="instrNew" onFile={handleFile} fileName={instrNewName} color="#D68A16" />
-            <DropZone label="Events" fileKey="events" onFile={handleFile} fileName={evtName} color="#146B42" />
-          </div>
+
+          <Disclosure title="How to make the cleaned file">
+            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#3a3a3a", lineHeight: 1.7 }}>
+              <li><strong>Export four reports</strong> from Springshare, each for <strong>7/1/2026 to the end of the month</strong>, and save them in <code style={PATH_STYLE}>Dashboard data/raw-monthly</code>. Click paths are below.</li>
+              <li><strong>Double-click</strong> <em>Clean this month's exports</em> in the <code style={PATH_STYLE}>Dashboard data</code> folder.</li>
+              <li><strong>Check the report</strong> in the window for STOPPED or WARNING. It is also saved as <code style={PATH_STYLE}>cleaned/latest-run-report.txt</code>.</li>
+              <li><strong>Choose the cleaned file</strong> above: the newest <code style={PATH_STYLE}>.csv</code> in <code style={PATH_STYLE}>Dashboard data/cleaned</code>.</li>
+            </ol>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10, marginTop: 14 }}>
+              {SPRINGSHARE_GUIDE.filter(g => g.monthly).map(g => <GuideCard key={g.src} g={g} />)}
+            </div>
+            <div style={{ fontSize: 12, color: NU.muted, marginTop: 12, lineHeight: 1.6 }}>
+              The full routine, including what to do when the script stops, is in <code style={PATH_STYLE}>MONTHLY_ROUTINE.md</code> in the dashboard repository.
+            </div>
+          </Disclosure>
+
+          <Disclosure title="Load raw Springshare exports instead">
+            <div style={{ fontSize: 12, color: NU.muted, marginBottom: 12, lineHeight: 1.6 }}>
+              One file per box. Instruction and Async each have a file through June 30, 2026 and a file from July 1, 2026. Loading a raw file clears a loaded cleaned file.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              <DropZone label="Consults (Sync)" fileKey="sync" onFile={handleFile} fileName={syncName} color="#1F6FA8" />
+              <DropZone label="Consults (Async) — through Jun 30 2026" fileKey="asyncOld" onFile={handleFile} fileName={asyncOldName} color="#4E8FBF" />
+              <DropZone label="Consults (Async) — Jul 1 2026+" fileKey="asyncNew" onFile={handleFile} fileName={asyncNewName} color="#4E8FBF" />
+              <DropZone label="Instruction — through Jun 30 2026" fileKey="instrOld" onFile={handleFile} fileName={instrOldName} color="#D68A16" />
+              <DropZone label="Instruction — Jul 1 2026+" fileKey="instrNew" onFile={handleFile} fileName={instrNewName} color="#D68A16" />
+              <DropZone label="Events" fileKey="events" onFile={handleFile} fileName={evtName} color="#146B42" />
+            </div>
+            <Disclosure title="How to pull these files from Springshare" nested>
+              <div style={{ fontSize: 12, color: NU.muted, marginBottom: 12, lineHeight: 1.6 }}>
+                Sync consults and Events are single files from 1/1/2018. Use YYYY-MM-DD dates.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
+                {SPRINGSHARE_GUIDE.map(g => <GuideCard key={g.src} g={g} showZone />)}
+              </div>
+            </Disclosure>
+          </Disclosure>
+
           {evtData && evtData.length > 0 && evtData[0][evtNameField] === undefined && (
-            <div style={{ marginTop: 10, padding: "10px 14px", background: "#FFF8E1", borderRadius: 8, fontSize: 12, color: "#8B6914" }}>
-              ⚠ The events file doesn't have an "Event Organizer" column. Per-person breakdown won't be available for events. Expected columns: "Event Organizer" and optionally "Presenter".
+            <div role="alert" style={{ marginTop: 12, padding: "10px 14px", background: "#FFF8E1", borderRadius: 4, fontSize: 12, color: "#6B4E0E" }}>
+              The events file doesn't have an "Event Organizer" column. Per-person breakdown won't be available for events. Expected columns: "Event Organizer" and optionally "Presenter".
             </div>
           )}
-
-          {/* How-to-pull instructions (collapsible) */}
-          {(() => {
-            const guide = [
-              { src: "LibInsight — Instruction (Jul 1 2026 onward)", zone: "Instruction — Jul 1 2026+",
-                steps: ["Datasets", "Instruction Statistics", "7/1/2026 → desired end date", "Generate report", "Reports tab", "Export Data to CSV"],
-                file: "Instruction_StartDate-EndDate.csv" },
-              { src: "LibInsight — Instruction (through Jun 30 2026)", zone: "Instruction — through Jun 30 2026",
-                steps: ["Datasets", "Retired Instruction Statistics", "1/1/2018 → 6/30/2026", "Generate report", "Reports tab", "Export Data to CSV"],
-                file: "Instruction_StartDate-EndDate.csv" },
-              { src: "LibAnswers — Async Consults", zone: "Consults (Async) — one export per date range",
-                steps: ["Ref Analytics", "Statistics", "Type of Support: Select All", "Select Dates", "Generate", "Export", "Export Transactions"],
-                file: "LibAnswers_StartDate-EndDate.csv" },
-              { src: "LibCal — Consults (Sync)", zone: "Consults (Sync)",
-                steps: ["Appointments", "Booking Explorer", "Select All Users", "Select Dates", "Go", "Export"],
-                file: "Consults_StartDate-EndDate.csv" },
-              { src: "LibCal — Events", zone: "Events",
-                steps: ["Events", "Event Explorer", "Select Dates", "Show Registration Responses: No", "Submit", "Export"],
-                file: "Events_StartDate-EndDate.csv" },
-            ];
-            return (
-              <details style={{ marginTop: 16, borderTop: "1px solid " + NU.border, paddingTop: 14 }}>
-                <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 900, letterSpacing: "0.11em", textTransform: "uppercase", color: NU.red }}>
-                  How to pull these files from Springshare
-                </summary>
-                <div style={{ fontSize: 12, color: NU.muted, margin: "10px 0 12px", lineHeight: 1.6 }}>
-                  Instruction and Async each have two drop zones split at July 1, 2026 — export a "through 6/30/2026" file and a "7/1/2026 onward" file for each. Sync consults and Events are single files. Use ISO dates (YYYY-MM-DD) where possible.
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
-                  {guide.map(g => (
-                    <div key={g.src} style={{ border: "1px solid " + NU.border, borderRadius: 4, padding: "12px 14px" }}>
-                      <div style={{ fontSize: 11, fontWeight: 900, color: NU.ink, textTransform: "uppercase", letterSpacing: "0.06em" }}>{g.src}</div>
-                      <div style={{ fontSize: 12, color: "#3a3a3a", lineHeight: 1.8, margin: "7px 0 9px" }}>{g.steps.join("  →  ")}</div>
-                      <div style={{ fontSize: 11, color: NU.muted }}>Save as <span style={{ fontWeight: 700, color: NU.ink }}>{g.file}</span> · drop in <span style={{ fontWeight: 700, color: NU.ink }}>{g.zone}</span></div>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            );
-          })()}
         </div>
 
         {!hasData && (
-          <div style={{ textAlign: "center", padding: "60px 20px", color: "#999" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: "#777" }}>Drop your CSV files above to get started</div>
-            <div style={{ fontSize: 13, marginTop: 6 }}>Consultations (sync & async), instruction sessions, and events</div>
+          <div style={{ textAlign: "center", padding: "48px 20px", fontSize: 14, color: NU.muted }}>
+            Load the cleaned file above to see this month's numbers.
           </div>
         )}
 
