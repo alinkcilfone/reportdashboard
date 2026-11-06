@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YLKv7rHGq/SIJMY+uX0AmFTmjy9HIjHiiAknkmMQ8IM=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-sYPdHc4Swro2+pDcDX/1ruu716qbccjHtkH3PKEI/Yw=' 'unsafe-eval' https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Library Services Activity Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -144,6 +144,22 @@ function deptToTeam(value) {
   if (v.includes("online") || v.includes("global")) return "Online Learning";
   if (v.includes("assh") || v.includes("social scien") || v.includes("humanities") || v.includes("arts")) return "ASSH";
   return value.trim();
+}
+
+// Read event prep time, in minutes, from a LibCal "Event Note". Staff enter it
+// several ways: "60", "60 minutes", "Prep time: 70 minutes", "prep time 120 min",
+// "~240", "2 hours". A note that is only a number counts as minutes; otherwise
+// the first number followed by a time unit counts. Anything else is 0, so a
+// head count ("app. 20 students") or a URL is never mistaken for prep time.
+// tools/clean_and_consolidate.py applies the same rule to flag unreadable notes.
+function parsePrepMinutes(note) {
+  const v = (note || "").trim();
+  const bare = v.match(/^~?\\s*(\\d+(?:\\.\\d+)?)$/);
+  if (bare) return Math.round(parseFloat(bare[1]));
+  const unit = v.match(/(\\d+(?:\\.\\d+)?)\\s*(minutes?|mins?|hours?|hrs?|hr|h)\\b/i);
+  if (!unit) return 0;
+  const n = parseFloat(unit[1]);
+  return Math.round(unit[2].toLowerCase().startsWith("h") ? n * 60 : n);
 }
 
 // Parse a LibAnswers "Time spent" bucket into a {min, max} minute range. Handles
@@ -1424,7 +1440,7 @@ function LibraryDashboard() {
       const instrMin = (instrData || []).filter(r => getMonthKey(r["Start Date"]) === mk)
         .reduce((s, r) => s + (parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) || 0), 0);
       const evtMin = (evtData || []).filter(r => getMonthKey(r["Date"] || r["Start Date"] || r["Event Date"]) === mk)
-        .reduce((s, r) => s + (parseInt(r["Event Note"] || "0", 10) || 0), 0);
+        .reduce((s, r) => s + parsePrepMinutes(r["Event Note"]), 0);
       let consultMin = 0;
       (asyncData || []).filter(r => getMonthKey(r[asyncDateCol]) === mk).forEach(r => {
         const range = parseTimeRange(r["Time spent"]);
@@ -1506,19 +1522,13 @@ function LibraryDashboard() {
     return instrYACurrent.reduce((s, r) => s + (parseInt(r["Estimated Number of Attendees"], 10) || 0), 0);
   }, [instrYACurrent]);
 
-  // Event prep time (plain number in "Event Note" column)
+  // Event prep time, read from the "Event Note" column by parsePrepMinutes()
   const evtPrepMinutes = useMemo(() => {
-    return evtMonth.reduce((s, r) => {
-      const v = parseInt(r["Event Note"] || "0", 10);
-      return s + (isNaN(v) ? 0 : v);
-    }, 0);
+    return evtMonth.reduce((s, r) => s + parsePrepMinutes(r["Event Note"]), 0);
   }, [evtMonth]);
 
   const evtPrepMinutesYA = useMemo(() => {
-    return evtYACurrent.reduce((s, r) => {
-      const v = parseInt(r["Event Note"] || "0", 10);
-      return s + (isNaN(v) ? 0 : v);
-    }, 0);
+    return evtYACurrent.reduce((s, r) => s + parsePrepMinutes(r["Event Note"]), 0);
   }, [evtYACurrent]);
 
   // Event participant totals
@@ -1728,7 +1738,7 @@ function LibraryDashboard() {
       }) : [];
       const events = evtRows.length;
       const instrPrep = instrRows.reduce((s, r) => s + (parseInt(r["Minutes on prep and followup (e.g. enter 120 minutes for two hours of prep)"] || "0", 10) || 0), 0);
-      const evtPrep = evtRows.reduce((s, r) => s + (parseInt(r["Event Note"] || "0", 10) || 0), 0);
+      const evtPrep = evtRows.reduce((s, r) => s + parsePrepMinutes(r["Event Note"]), 0);
       const asyncYear = asyncData ? asyncData.filter(r => (r[asyncDateCol] || "").startsWith(yStr)) : [];
       let consultPrepMin = 0, consultPrepMax = 0;
       let asyncTimeMin = 0, asyncTimeMax = 0;
@@ -2253,14 +2263,14 @@ function LibraryDashboard() {
                   sub={evtPrepMinutes.toLocaleString() + " minutes"}
                   color="#146B42" icon="⏱"
                   onClick={() => {
-                    const evtPrepRows = evtMonth.filter(r => parseInt(r["Event Note"] || "0", 10) > 0);
+                    const evtPrepRows = evtMonth.filter(r => parsePrepMinutes(r["Event Note"]) > 0);
                     setDrilldown({
                       title: "Event Prep & Followup — " + periodLabel,
                       rows: evtPrepRows, color: "#146B42",
                       columns: [
                         { key: evtDateField, label: "Date", width: 100, render: v => v ? v.substring(0, 10) : "" },
                         { key: "Event Organizer", label: "Organizer", width: 150 },
-                        { key: "Event Note", label: "Minutes", width: 80 },
+                        { key: "Event Note", label: "Minutes", width: 80, render: v => parsePrepMinutes(v) },
                         { key: "Presenter", label: "Presenter", width: 150 },
                       ],
                     });
